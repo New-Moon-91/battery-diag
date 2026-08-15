@@ -1,0 +1,13 @@
+# 선택압 스윕 — 버퍼를 키워 CAP/버퍼를 낮춘다. 실제 센터는 ~9%.
+#
+# GPU 0 에는 Xorg/gnome-shell 이 붙어 있어 커널 워치독(cudaErrorLaunchTimeout)이 작동한다.
+# 큰 인스턴스는 디스플레이가 없는 GPU 1 에서만 돌린다.
+#   확인:  nvidia-smi  → Processes 에 Xorg 가 어느 GPU 에 붙었는지 볼 것
+#   GPU 0 에 디스플레이가 없다면 gpus: [0, 1] 로 되돌려도 된다.
+out: /home/data/batdiag/results/sweep_selectivity
+gpus: [1]
+per_gpu: 1
+base: {Mcyc: 1, Cp: 500000, Cf: 20000, phi: 1.0, NARR: 4, seed: 0}
+grid:
+  NMAX: [2, 3]
+  SMAX: [2, 3, 4]

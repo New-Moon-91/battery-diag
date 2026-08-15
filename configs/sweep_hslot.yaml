@@ -1,0 +1,7 @@
+# 항온실 병목 — 설계규칙 H >= M*(T_hold/T_p) 검증
+out: /home/data/batdiag/results/sweep_hslot
+base: {NMAX: 2, SMAX: 2, NARR: 4, Cp: 500000, Cf: 20000}
+grid:
+  Mcyc: [2]
+  Hslot: [1, 2, 3, 4, 5]
+  seed: [0]

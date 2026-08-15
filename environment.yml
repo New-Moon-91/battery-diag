@@ -1,0 +1,18 @@
+name: batdiag
+channels: [conda-forge]
+dependencies:
+  - python=3.11
+  - numpy>=1.26
+  - scipy>=1.11
+  - pandas>=2.1
+  - openpyxl
+  - pyyaml
+  - matplotlib
+  - tqdm
+  - pytest
+  - pip
+  - pip:
+      # PyTorch 는 conda 로 설치하지 말 것 — Blackwell(sm_120) 은 cu128 휠 필요
+      # conda env 생성 후 아래를 별도 실행:
+      #   pip install torch --index-url https://download.pytorch.org/whl/cu128
+      - types-PyYAML

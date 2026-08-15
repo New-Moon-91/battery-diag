@@ -1,0 +1,10 @@
+# 대형 — NMAX=3/SMAX=3 이 실제 센터 선택압(~9%) 지점.
+# NMAX=4 계열은 nnz 가 16GB 를 넘길 수 있으니 실패하면 그 조합만 제외할 것.
+out: /home/data/batdiag/results/sweep_selectivity_big
+gpus: [1]
+per_gpu: 1
+base: {Mcyc: 1, Cp: 500000, Cf: 20000, phi: 1.0, NARR: 4}
+grid:
+  NMAX: [3]
+  SMAX: [3]
+  seed: [0, 1, 2]

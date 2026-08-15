@@ -1,0 +1,8 @@
+# 부하 스윕 — 선택압(CAP/버퍼) 축의 대표 실험
+out: /home/data/batdiag/results/sweep_load
+gpus: [0, 1]
+per_gpu: 2
+base: {Mcyc: 1, NMAX: 2, SMAX: 2, Cp: 500000, Cf: 20000, phi: 1.0}
+grid:
+  NARR: [1, 2, 3, 4, 6, 8]
+  seed: [0, 1, 2]

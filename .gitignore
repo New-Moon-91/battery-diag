@@ -1,0 +1,21 @@
+
+# 원자료 — 공동연구자 미발표 데이터셋이므로 제외 (서버에만 보관)
+
+data/pool.csv
+
+data/pass_soh.csv
+
+data/recycle_post.csv
+
+data/*.xlsx
+
+# 대용량·재생성 가능
+
+__pycache__/
+
+*.pyc
+
+*.pt
+
+*.npz
+

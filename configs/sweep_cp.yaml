@@ -1,0 +1,6 @@
+# C_p 구간 — R3(경계영역) 존재 구간 지도
+out: /home/data/batdiag/results/sweep_cp
+base: {Mcyc: 1, NMAX: 2, SMAX: 2, NARR: 3, Cf: 20000, phi: 1.0}
+grid:
+  Cp: [100000, 200000, 300000, 500000, 700000, 1000000, 2000000]
+  seed: [0]
