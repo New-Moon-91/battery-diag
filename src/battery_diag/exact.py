@@ -38,20 +38,28 @@ class ExactSolver:
         return self.rsa + torch.mv(self.A, h)
 
     def _policy_rows(self, acts_local):
-        """정책이 고정되면 상태당 한 행만 필요 → (nS x nS) 부분행렬을 한 번만 만든다.
-        기존 구현은 매 반복 전체 (n_sa x nS) SpMV 후 gather 하여 행동수/상태수 배를 낭비했고,
-        큰 인스턴스에서 커널 하나가 디스플레이 워치독(cudaErrorLaunchTimeout)에 걸렸다."""
+        """정책 고정 시 상태당 한 행만 필요 → 그 행들만 평탄화해 보관.
+
+        cuSPARSE 디스크립터(sparse_csr_tensor) 대신 gather + scatter_add 로 곱한다.
+        커널 하나로 끝나고, 부분행렬을 매번 새로 만들 때 생기던
+        `cusparseCreateCsr: invalid value` 를 원천적으로 피한다.
+        """
         rows = self.aptr[:-1] + torch.as_tensor(acts_local, device=self.dev, dtype=torch.long)
         ip, ix, vl = self.A.crow_indices(), self.A.col_indices(), self.A.values()
         starts = ip[rows]; cnt = ip[rows + 1] - starts
         total = int(cnt.sum().item())
         offs = torch.cumsum(cnt, 0) - cnt
         pos = torch.repeat_interleave(starts - offs, cnt) + torch.arange(total, device=self.dev)
-        nip = torch.zeros(self.nS + 1, dtype=torch.long, device=self.dev)
-        torch.cumsum(cnt, 0, out=nip[1:])
-        Api = torch.sparse_csr_tensor(nip, ix[pos], vl[pos],
-                                      size=(self.nS, self.nS), dtype=self.dt)
-        return Api, self.rsa[rows]
+        cols = ix[pos].to(torch.long)
+        vals = vl[pos]
+        src = torch.repeat_interleave(torch.arange(self.nS, device=self.dev), cnt)
+        return dict(cols=cols, vals=vals, src=src, r=self.rsa[rows])
+
+    def _pi_mv(self, P, h):
+        """(P^pi h)(s) = sum_j p_sj h_j   — 행 방향 집계"""
+        out = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
+        out.scatter_add_(0, P['src'], P['vals'] * h[P['cols']])
+        return out
 
     def _seg_max(self, q):
         out = torch.full((self.nS,), NEG, device=self.dev, dtype=self.dt)
@@ -88,12 +96,12 @@ class ExactSolver:
     def evaluate(self, acts_local, tol=1e-10, itmax=20000, check_every=25):
         """acts_local: 상태별 로컬 행동 인덱스 → (장기평균보상 g, 상대가치 h)
 
-        수렴 확인은 check_every 회마다만 한다 — 매 반복 .item() 은 GPU-CPU 동기화라 비싸다."""
-        Api, rpi = self._policy_rows(acts_local)
+        수렴 확인은 check_every 회마다만 — 매 반복 .item() 은 GPU-CPU 동기화라 비싸다."""
+        P = self._policy_rows(acts_local)
         h = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
         g = torch.zeros((), device=self.dev, dtype=self.dt)
         for it in range(itmax):
-            hn = rpi + torch.mv(Api, h)
+            hn = P['r'] + self._pi_mv(P, h)
             g = hn[0].clone(); hn = hn - g
             if (it + 1) % check_every == 0 or it + 1 == itmax:
                 if torch.max(torch.abs(hn - h)).item() < tol:
@@ -106,14 +114,11 @@ class ExactSolver:
 
     # ---------- 정상상태 분포 ----------
     def stationary(self, acts_local, itmax=20000, tol=1e-13, check_every=25):
-        Api, _ = self._policy_rows(acts_local)
-        nip, cols, vals = Api.crow_indices(), Api.col_indices(), Api.values()
-        cnt = nip[1:] - nip[:-1]
-        src = torch.repeat_interleave(torch.arange(self.nS, device=self.dev), cnt)
+        P = self._policy_rows(acts_local)
         d = torch.full((self.nS,), 1.0/self.nS, device=self.dev, dtype=self.dt)
         for it in range(itmax):
             nd = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
-            nd.scatter_add_(0, cols, vals * d[src])
+            nd.scatter_add_(0, P['cols'], P['vals'] * d[P['src']])
             nd /= nd.sum()
             if (it + 1) % check_every == 0 or it + 1 == itmax:
                 if torch.max(torch.abs(nd - d)).item() < tol:

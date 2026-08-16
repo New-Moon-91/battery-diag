@@ -37,8 +37,17 @@ def rng_state():
                 numpy=np.random.get_state())
 
 
+def _as_cpu_byte(t):
+    """torch.load(map_location='cuda') 가 RNG 상태까지 CUDA 로 올려버린다.
+    set_rng_state 는 CPU ByteTensor 만 받으므로 되돌린다."""
+    return t.cpu().to(torch.uint8) if torch.is_tensor(t) else t
+
+
 def set_rng_state(s):
-    torch.set_rng_state(s['torch'])
+    torch.set_rng_state(_as_cpu_byte(s['torch']))
     if s.get('cuda') is not None and torch.cuda.is_available():
-        torch.cuda.set_rng_state_all(s['cuda'])
+        try:
+            torch.cuda.set_rng_state_all([_as_cpu_byte(x) for x in s['cuda']])
+        except Exception:
+            pass          # GPU 개수가 바뀐 경우 등 — 재현성만 잃고 진행에는 지장 없음
     np.random.set_state(s['numpy'])
