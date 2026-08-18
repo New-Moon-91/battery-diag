@@ -19,3 +19,7 @@ __pycache__/
 
 *.npz
 
+
+# 실행 산출물 (서버 /home/data/batdiag/results 에 보관)
+
+results/
