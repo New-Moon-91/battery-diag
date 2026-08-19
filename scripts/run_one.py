@@ -36,6 +36,8 @@ def main():
     ap.add_argument('--rounds', type=int, default=6)
     ap.add_argument('--epochs', type=int, default=40)
     ap.add_argument('--no-dcl', action='store_true')
+    ap.add_argument('--decoder', choices=['legacy', 'carry'], default='carry',
+                    help='carry=자기회귀 디코더(기본, v5c). legacy=v5b 디코더 — 옛 결과 재현용')
     a = ap.parse_args()
     C = json.loads(a.config_json)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
@@ -85,7 +87,9 @@ def main():
     if not a.no_dcl:
         acts0 = pol.index_myopic(I)
         net, gbest, hist = run_dcl(I, S, acts0, ck, rounds=a.rounds, epochs=a.epochs,
-                                   seed=int(C.get('seed', 0)), device=dev, log=log, gstar=gstar)
+                                   seed=int(C.get('seed', 0)), device=dev, log=log, gstar=gstar,
+                                   carry=(a.decoder == 'carry'))
+        res['decoder'] = a.decoder
         res['dcl'] = dict(best=float(gbest), gap=float(100*(gstar-gbest)/gstar), hist=hist)
         torch.save(net.state_dict(), out/'net_best.pt')
     (out/'result.json').write_text(json.dumps(res, ensure_ascii=False, indent=1, default=float))

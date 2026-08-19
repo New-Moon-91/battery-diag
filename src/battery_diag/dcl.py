@@ -47,10 +47,10 @@ def greedy_policy(net, I, tens, bs=4096):
 
 
 def run_dcl(I, solver, acts0, ckpt: Checkpoint, rounds=6, epochs=40, lr=5e-4,
-            seed=0, device='cuda', log=print, gstar=None):
+            seed=0, device='cuda', log=print, gstar=None, carry=False):
     torch.manual_seed(seed); np.random.seed(seed)
     tens = state_tensors(I, device=device)
-    net = PolicyNet().to(device)
+    net = PolicyNet(carry=carry).to(device)
     opt = torch.optim.Adam(net.parameters(), lr=lr)
     acts = np.asarray(acts0).copy(); r0 = 0
     best = (-1e18, None); hist = []

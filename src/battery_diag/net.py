@@ -7,7 +7,7 @@
 로 바꿔 GPU 한 장에서 수천 상태를 한 번에 처리한다.
 """
 from __future__ import annotations
-import numpy as np, torch, torch.nn as nn
+import numpy as np, torch, torch.nn as nn, torch.nn.functional as F
 
 A_UNT = ['SELL', 'FAST', 'PRECISE', 'HOLD']
 A_SCR = ['SELL', 'PRECISE', 'HOLD']
@@ -18,14 +18,34 @@ def mlp(i, h, o, act=nn.Tanh):
     return nn.Sequential(nn.Linear(i, h), act(), nn.Linear(h, h), act(), nn.Linear(h, o))
 
 
+# carry 차원 — 미검사축 7, 선별축 6 (아래 carry_from_labels 의 열 순서와 같다)
+CARRY_U, CARRY_S = 7, 6
+
+
 class PolicyNet(nn.Module):
-    def __init__(self, fdim=6, ctxdim=4, hid=128, emb=64, nbin=12):
+    """carry=False 는 v5b 까지의 디코더 그대로. carry=True 는 자기회귀 디코더.
+
+    레거시 디코더는 슬롯 로짓을 루프 **밖에서 한 번만** 계산한다. 그래서 로짓이
+    (z, 슬롯특징, 진입시점 예산) 이 아니라 사실상 (z, 슬롯특징) 에만 의존하고
+    — 예산조차 초기값 하나로 고정 — 슬롯 사이를 가르는 것은 마스크뿐이다.
+    특징이 같은 슬롯은 마스크가 바뀌기 전까지 반드시 같은 행동을 받으므로
+    "같은 유형 3대를 신속 2 + 매각 1 로 쪼개기" 를 표현할 수 없다 (v5b §4.2).
+
+    덧붙여 레거시는 학습·추론이 어긋나 있었다. ce_loss 는 슬롯별 예산 budU 를
+    헤드에 넣는데 decode 는 초기 예산만 넣는다. carry=True 는 양쪽 모두
+    carry_from_labels 와 같은 정의를 쓰므로 이 불일치도 사라진다.
+    """
+
+    def __init__(self, fdim=6, ctxdim=4, hid=128, emb=64, nbin=12, carry=False):
         super().__init__()
         self.nbin = nbin
+        self.carry = bool(carry)
+        cu, cs = (CARRY_U, CARRY_S) if self.carry else (1, 1)
+        self.cu, self.cs = cu, cs
         self.phiU = mlp(fdim, hid, emb); self.phiS = mlp(fdim, hid, emb)
         self.enc  = mlp(2*emb + ctxdim + 2*nbin + 2, hid, hid)
-        self.headU = mlp(hid + fdim + 1, hid, 4)
-        self.headS = mlp(hid + fdim + 1, hid, 3)
+        self.headU = mlp(hid + fdim + cu, hid, 4)
+        self.headS = mlp(hid + fdim + cs, hid, 3)
         self.V = mlp(hid, hid, 1)
 
     def _hist(self, X, m, col):
@@ -53,57 +73,165 @@ class PolicyNet(nn.Module):
         bb = bud.unsqueeze(-1).unsqueeze(1).expand(B, K, 1)
         return head(torch.cat([zz, feat, bb], -1))
 
+    # ---------- carry: 지금까지의 배정을 요약한 벡터 ----------
+    #
+    # 열 순서 (carry=True). decode 의 축차 갱신과 carry_from_labels 의 누적합이
+    # **같은 정의**여야 학습(교사강요)과 추론이 일치한다 — tests/test_carry.py 가 고정한다.
+    #   미검사축 (CARRY_U=7)
+    #     0..3  앞선 유효 슬롯에 배정한 SELL/FAST/PRECISE/HOLD 개수 / Um
+    #     4     잔여 정밀예산 (cap - 앞선 PRECISE 수) / cap
+    #     5     선별버퍼 잔여용량 (SMAX - |scr| - 앞선 FAST 수) / SMAX
+    #     6     남은 유효 슬롯 수(자기 포함) / Um
+    #   선별축 (CARRY_S=6)
+    #     0..2  앞선 유효 슬롯에 배정한 SELL/PRECISE/HOLD 개수 / Sm
+    #     3     잔여 정밀예산 (cap - 미검사축 PRECISE 총수 - 앞선 PRECISE 수) / cap
+    #     4     선별버퍼 잔여용량 (SMAX - (|scr| - 앞선 SELL - 앞선 PRECISE) - FAST 총수) / SMAX
+    #     5     남은 유효 슬롯 수(자기 포함) / Sm
+    #
+    # 5번(미검사축)이 이번 변경의 핵심이다. FAST 로 보낸 배터리는 결함이 안 잡히면
+    # 다음 기 선별버퍼로 들어가고, 버퍼가 차 있으면 step_dist 가 즉시매각으로 흘린다
+    # (강제매각). 즉 신속검사 수는 선별버퍼 잔여용량에 맞춰 조절해야 하는데
+    # 레거시 디코더에는 그 신호가 아예 없었다. |scr| 는 전량 보유를 가정한 보수적
+    # 근사다 — 미검사축이 선별축보다 먼저 디코딩되어 보유 수를 아직 모르기 때문이다.
+    # (선별축을 먼저 디코딩하면 근사를 없앨 수 있다. 후속 과제로 남긴다.)
+
+    def _dtype_dev(self, U):
+        return U.dtype, U.device
+
+    def carry_from_labels(self, batch, lab_u, lab_s, cap: int):
+        """라벨 → (cU, cS, mU, mS). 교사강요용 — 누적합으로 한 번에 계산한다."""
+        U, mu, S, ms = batch['U'], batch['mu'], batch['S'], batch['ms']
+        allow_u, allow_s = batch['allow_u'], batch['allow_s']
+        dt = U.dtype
+        Um = mu.shape[1]; Sm = ms.shape[1]
+        oneU = F.one_hot(lab_u, 4).to(dt) * mu.unsqueeze(-1)
+        oneS = F.one_hot(lab_s, 3).to(dt) * ms.unsqueeze(-1)
+        prevU4 = torch.cumsum(oneU, 1) - oneU              # (B,Um,4) 자기 앞까지
+        prevS3 = torch.cumsum(oneS, 1) - oneS              # (B,Sm,3)
+        prevPrecU, prevFastU = prevU4[..., 2], prevU4[..., 1]
+        totPrecU = oneU[..., 2].sum(1, keepdim=True)
+        totFastU = oneU[..., 1].sum(1, keepdim=True)
+        prevSellS, prevPrecS = prevS3[..., 0], prevS3[..., 1]
+        budU = cap - prevPrecU
+        budS = cap - totPrecU - prevPrecS
+        mU = allow_u.clone(); mU[..., 2] &= (budU >= 1)
+        mS = allow_s.clone(); mS[..., 1] &= (budS >= 1)
+        if not self.carry:                                  # 레거시: 예산 하나만
+            return (budU/max(cap,1)).unsqueeze(-1), (budS/max(cap,1)).unsqueeze(-1), mU, mS
+        nscr = ms.sum(1, keepdim=True)
+        remU = mu.flip(1).cumsum(1).flip(1)                 # 자기 포함 남은 유효 슬롯
+        remS = ms.flip(1).cumsum(1).flip(1)
+        freeU = Sm - nscr - prevFastU
+        freeS = Sm - (nscr - prevSellS - prevPrecS) - totFastU
+        cU = torch.cat([prevU4/max(Um,1), (budU/max(cap,1)).unsqueeze(-1),
+                        (freeU/max(Sm,1)).unsqueeze(-1), (remU/max(Um,1)).unsqueeze(-1)], -1)
+        cS = torch.cat([prevS3/max(Sm,1), (budS/max(cap,1)).unsqueeze(-1),
+                        (freeS/max(Sm,1)).unsqueeze(-1), (remS/max(Sm,1)).unsqueeze(-1)], -1)
+        return cU, cS, mU, mS
+
+    def _logits(self, head, z, feat, bud):
+        B, K, F_ = feat.shape
+        zz = z.unsqueeze(1).expand(B, K, z.shape[-1])
+        bb = bud.unsqueeze(-1).unsqueeze(1).expand(B, K, 1)
+        return head(torch.cat([zz, feat, bb], -1))
+
     # ---------- 탐욕 디코딩 (슬롯 축 순차, 상태 축 병렬) ----------
     @torch.no_grad()
-    def decode(self, batch, cap: int, sample=False, gen=None):
+    def decode(self, batch, cap: int, sample=False, gen=None, return_carry=False):
         U, mu, S, ms, ctx = batch['U'], batch['mu'], batch['S'], batch['ms'], batch['ctx']
         allow_u, allow_s = batch['allow_u'], batch['allow_s']
         B, Um = mu.shape; Sm = ms.shape[1]
+        dt = U.dtype
         z = self.encode(U, mu, S, ms, ctx)
-        bud = torch.full((B,), float(cap), device=U.device, dtype=U.dtype)
         au = torch.zeros(B, Um, dtype=torch.long, device=U.device)
         as_ = torch.zeros(B, Sm, dtype=torch.long, device=U.device)
-        lgU = self._logits(self.headU, z, U, bud/max(cap,1))
+        pick = (lambda lg: torch.distributions.Categorical(logits=lg).sample()) if sample \
+               else (lambda lg: lg.argmax(-1))
+
+        if not self.carry:                                  # ---- 레거시 (v5b 그대로)
+            bud = torch.full((B,), float(cap), device=U.device, dtype=dt)
+            lgU = self._logits(self.headU, z, U, bud/max(cap,1))
+            for i in range(Um):
+                m = allow_u[:, i].clone()
+                m[:, 2] &= (bud >= 1)
+                a = pick(lgU[:, i].masked_fill(~m, NEG))
+                a = torch.where(mu[:, i] > 0, a, torch.zeros_like(a))
+                au[:, i] = a
+                bud = bud - ((a == 2) & (mu[:, i] > 0)).to(dt)
+            lgS = self._logits(self.headS, z, S, bud/max(cap,1))
+            for j in range(Sm):
+                m = allow_s[:, j].clone()
+                m[:, 1] &= (bud >= 1)
+                a = pick(lgS[:, j].masked_fill(~m, NEG))
+                a = torch.where(ms[:, j] > 0, a, torch.zeros_like(a))
+                as_[:, j] = a
+                bud = bud - ((a == 1) & (ms[:, j] > 0)).to(dt)
+            if return_carry:
+                return au.cpu().numpy(), as_.cpu().numpy(), None, None
+            return au.cpu().numpy(), as_.cpu().numpy()
+
+        # ---- 자기회귀: 슬롯마다 carry 를 갱신하고 로짓을 그 자리에서 계산
+        nscr = ms.sum(1)
+        remU = mu.flip(1).cumsum(1).flip(1)
+        remS = ms.flip(1).cumsum(1).flip(1)
+        cntU = torch.zeros(B, 4, device=U.device, dtype=dt)
+        cntS = torch.zeros(B, 3, device=U.device, dtype=dt)
+        prevPrecU = torch.zeros(B, device=U.device, dtype=dt)
+        prevFastU = torch.zeros(B, device=U.device, dtype=dt)
+        cUs, cSs = [], []
         for i in range(Um):
-            m = allow_u[:, i].clone()
-            m[:, 2] &= (bud >= 1)
-            lg = lgU[:, i].masked_fill(~m, NEG)
-            a = (torch.distributions.Categorical(logits=lg).sample() if sample else lg.argmax(-1))
+            budU = cap - prevPrecU
+            freeU = Sm - nscr - prevFastU
+            c = torch.cat([cntU/max(Um,1), (budU/max(cap,1)).unsqueeze(-1),
+                           (freeU/max(Sm,1)).unsqueeze(-1),
+                           (remU[:, i]/max(Um,1)).unsqueeze(-1)], -1)
+            cUs.append(c)
+            lg = self.headU(torch.cat([z, U[:, i], c], -1))
+            m = allow_u[:, i].clone(); m[:, 2] &= (budU >= 1)
+            a = pick(lg.masked_fill(~m, NEG))
             a = torch.where(mu[:, i] > 0, a, torch.zeros_like(a))
             au[:, i] = a
-            bud = bud - ((a == 2) & (mu[:, i] > 0)).to(U.dtype)
-        lgS = self._logits(self.headS, z, S, bud/max(cap,1))
+            v = (mu[:, i] > 0).to(dt)
+            cntU = cntU + F.one_hot(a, 4).to(dt) * v.unsqueeze(-1)
+            prevPrecU = prevPrecU + (a == 2).to(dt) * v
+            prevFastU = prevFastU + (a == 1).to(dt) * v
+        totPrecU, totFastU = prevPrecU, prevFastU
+        prevSellS = torch.zeros(B, device=U.device, dtype=dt)
+        prevPrecS = torch.zeros(B, device=U.device, dtype=dt)
         for j in range(Sm):
-            m = allow_s[:, j].clone()
-            m[:, 1] &= (bud >= 1)
-            lg = lgS[:, j].masked_fill(~m, NEG)
-            a = (torch.distributions.Categorical(logits=lg).sample() if sample else lg.argmax(-1))
+            budS = cap - totPrecU - prevPrecS
+            freeS = Sm - (nscr - prevSellS - prevPrecS) - totFastU
+            c = torch.cat([cntS/max(Sm,1), (budS/max(cap,1)).unsqueeze(-1),
+                           (freeS/max(Sm,1)).unsqueeze(-1),
+                           (remS[:, j]/max(Sm,1)).unsqueeze(-1)], -1)
+            cSs.append(c)
+            lg = self.headS(torch.cat([z, S[:, j], c], -1))
+            m = allow_s[:, j].clone(); m[:, 1] &= (budS >= 1)
+            a = pick(lg.masked_fill(~m, NEG))
             a = torch.where(ms[:, j] > 0, a, torch.zeros_like(a))
             as_[:, j] = a
-            bud = bud - ((a == 1) & (ms[:, j] > 0)).to(U.dtype)
+            v = (ms[:, j] > 0).to(dt)
+            cntS = cntS + F.one_hot(a, 3).to(dt) * v.unsqueeze(-1)
+            prevSellS = prevSellS + (a == 0).to(dt) * v
+            prevPrecS = prevPrecS + (a == 1).to(dt) * v
+        if return_carry:
+            cU = torch.stack(cUs, 1) if cUs else torch.zeros(B, 0, self.cu, device=U.device, dtype=dt)
+            cS = torch.stack(cSs, 1) if cSs else torch.zeros(B, 0, self.cs, device=U.device, dtype=dt)
+            return au.cpu().numpy(), as_.cpu().numpy(), cU, cS
         return au.cpu().numpy(), as_.cpu().numpy()
 
-    # ---------- 교사강요 교차엔트로피 (라벨로 예산 프리픽스 계산) ----------
+    # ---------- 교사강요 교차엔트로피 (라벨로 carry 를 누적합으로 계산) ----------
     def ce_loss(self, batch, lab_u, lab_s, cap: int):
         U, mu, S, ms, ctx = batch['U'], batch['mu'], batch['S'], batch['ms'], batch['ctx']
-        allow_u, allow_s = batch['allow_u'], batch['allow_s']
         B, Um = mu.shape; Sm = ms.shape[1]
         z = self.encode(U, mu, S, ms, ctx)
-        useU = ((lab_u == 2) & (mu > 0)).to(U.dtype)
-        useS = ((lab_s == 1) & (ms > 0)).to(U.dtype)
-        # 슬롯 i 진입 시점의 잔여 예산 = cap - (이전 슬롯들의 정밀 배정 수)
-        prevU = torch.cumsum(useU, 1) - useU
-        prevS = useU.sum(1, keepdim=True) + torch.cumsum(useS, 1) - useS
-        budU = (cap - prevU) / max(cap, 1)
-        budS = (cap - prevS) / max(cap, 1)
+        cU, cS, mU, mS = self.carry_from_labels(batch, lab_u, lab_s, cap)
         zz = z.unsqueeze(1).expand(B, Um, z.shape[-1])
-        lgU = self.headU(torch.cat([zz, U, budU.unsqueeze(-1)], -1))
-        mU = allow_u.clone(); mU[..., 2] &= ((cap - prevU) >= 1)
+        lgU = self.headU(torch.cat([zz, U, cU], -1))
         lpU = torch.log_softmax(lgU.masked_fill(~mU, NEG), -1)
         lossU = -(lpU.gather(-1, lab_u.unsqueeze(-1)).squeeze(-1) * mu).sum()
         zs = z.unsqueeze(1).expand(B, Sm, z.shape[-1])
-        lgS = self.headS(torch.cat([zs, S, budS.unsqueeze(-1)], -1))
-        mS = allow_s.clone(); mS[..., 1] &= ((cap - prevS) >= 1)
+        lgS = self.headS(torch.cat([zs, S, cS], -1))
         lpS = torch.log_softmax(lgS.masked_fill(~mS, NEG), -1)
         lossS = -(lpS.gather(-1, lab_s.unsqueeze(-1)).squeeze(-1) * ms).sum()
         return (lossU + lossS) / B

@@ -27,4 +27,4 @@ results/**
 
 !results/sweep_selectivity/
 
-!results/sweep_selectivity/summary.csv
+!results/sweep_selectivity/*.csv
