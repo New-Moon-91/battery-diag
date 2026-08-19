@@ -98,18 +98,22 @@ def test_forced_sale_order_cheapest_first():
     order = [I.TY[k] for k in I._sell_order]
     assert order == sorted(I.TY, key=lambda t: I.VS[t]), order
     # slack=0 이면 도착 전량이 매각되고 수용 개수벡터는 0 이다
-    for p, a, rev in I._arr_slack(0):
+    for p, a, rev, ns in I._arr_slack(0):
         assert sum(a) == 0
     # slack 이 NARR 이상이면 강제매각이 절대 없다
-    for p, a, rev in I._arr_slack(I.cfg.NARR):
-        assert rev == 0.0
+    for p, a, rev, ns in I._arr_slack(I.cfg.NARR):
+        assert rev == 0.0 and ns == 0
+    # 대수와 수익이 정합적이다 — 판 대수가 0 이면 수익도 0, 아니면 양수
+    for slack in range(I.cfg.NARR+2):
+        for p, a, rev, ns in I._arr_slack(slack):
+            assert (ns == 0) == (rev == 0.0)
 
 
 def test_no_free_loss_probability_conserved():
     """도착 확률질량이 어디서도 사라지지 않는다 (소실은 매각으로 흡수된다)."""
     I = _inst(NARR=4, W=2)
     for slack in range(0, I.cfg.NARR+2):
-        assert abs(sum(p for p, _, _ in I._arr_slack(slack)) - 1.0) < 1e-12
+        assert abs(sum(p for p, _, _, _ in I._arr_slack(slack)) - 1.0) < 1e-12
 
 
 # ---------------------------------------------------------------- 기존 모형과의 관계

@@ -150,7 +150,7 @@ class Instance:
         return out
 
     def _arr_slack(self, slack):
-        """잔여 자리 slack 에서의 (확률, 수용 개수벡터, 강제매각 수익).
+        """잔여 자리 slack 에서의 (확률, 수용 개수벡터, 강제매각 수익, 강제매각 대수).
 
         도착이 slack 을 넘치면 초과분은 미검사 상태로 즉시 재활용 매각된다.
         어느 것을 파는지는 정책이 아니라 규칙이 정한다 — 매각가치가 낮은 차종부터.
@@ -160,7 +160,7 @@ class Instance:
         nT = len(self.TY); agg = {}
         for a, pr in self._ARRP:
             excess = sum(a) - slack
-            rev = 0.0
+            rev = 0.0; n_sold = max(excess, 0)
             if excess > 0:
                 aa = list(a)
                 for k in self._sell_order:
@@ -168,9 +168,9 @@ class Instance:
                     take = min(aa[k], excess)
                     aa[k] -= take; excess -= take; rev += take*self.VS[self.TY[k]]
                 a = tuple(aa)
-            key = (a, rev)
+            key = (a, rev, n_sold)
             agg[key] = agg.get(key, 0.) + pr
-        out = [(p, a, rev) for (a, rev), p in agg.items()]
+        out = [(p, a, rev, ns) for (a, rev, ns), p in agg.items()]
         self._arrw[slack] = out
         return out
 
@@ -259,7 +259,7 @@ class Instance:
                 for nn, pa in self.arr(tuple(rem)):
                     out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc))
             else:
-                for pa, aa, rev in self._arr_slack(self.W - occ):
+                for pa, aa, rev, _ns in self._arr_slack(self.W - occ):
                     nn = tuple(rem[k]+aa[k] for k in range(nT))
                     out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc+rev))
         return out

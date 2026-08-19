@@ -93,10 +93,18 @@ class ExactSolver:
         return loc.cpu().numpy()
 
     # ---------- 정책평가 ----------
-    def evaluate(self, acts_local, tol=1e-10, itmax=20000, check_every=25):
+    def evaluate(self, acts_local, tol=1e-10, itmax=20000, check_every=25, rtol=1e-13):
         """acts_local: 상태별 로컬 행동 인덱스 → (장기평균보상 g, 상대가치 h)
 
-        수렴 확인은 check_every 회마다만 — 매 반복 .item() 은 GPU-CPU 동기화라 비싸다."""
+        수렴 확인은 check_every 회마다만 — 매 반복 .item() 은 GPU-CPU 동기화라 비싸다.
+
+        판정은 **절대+상대** 기준이다. 절대 tol 만 쓰면 이 문제에서 성립하지 않는다:
+        h 가 1e6 규모라 float64 표현 간격이 ~1e-10 인데 tol 도 1e-10 이라, 이미
+        수치적으로 도달한 고정점인데도 매 호출이 itmax(20,000)회를 전부 돌았다.
+        NMAX=3/SMAX=2 의 벤치마크 4종 평가가 잡당 ~2,600초 걸린 원인이 이것이다.
+        StreamSolver.evaluate 는 2026-08-19 에 같은 이유로 이미 고쳤다 — 두 경로의
+        판정 기준을 여기서 맞춘다. 고정점 자체는 바뀌지 않는다.
+        """
         P = self._policy_rows(acts_local)
         h = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
         g = torch.zeros((), device=self.dev, dtype=self.dt)
@@ -104,7 +112,9 @@ class ExactSolver:
             hn = P['r'] + self._pi_mv(P, h)
             g = hn[0].clone(); hn = hn - g
             if (it + 1) % check_every == 0 or it + 1 == itmax:
-                if torch.max(torch.abs(hn - h)).item() < tol:
+                d = torch.max(torch.abs(hn - h)).item()
+                sc = torch.max(torch.abs(hn)).item()
+                if d < tol + rtol*sc:
                     h = hn; break
             h = hn
         return float(g), h.cpu().numpy()

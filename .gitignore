@@ -34,3 +34,5 @@ results/**
 !results/w_model/*.csv
 
 !results/w_model/*.md
+
+!results/w_model/*.json
