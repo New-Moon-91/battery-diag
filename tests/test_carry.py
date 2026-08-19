@@ -26,13 +26,13 @@ DEV = 'cuda' if torch.cuda.is_available() else 'cpu'
 SEL = ['레이', '코나', 'SM3']
 
 
-def _inst(NMAX, SMAX, NARR=4):
+def _inst(NMAX=2, SMAX=2, NARR=4, W=None):
     FLEET, FS = load_cached('data')
     tot = sum(FLEET[t][0] for t in SEL)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0] / tot) for t in SEL}
     price = PriceParams.from_json(Path('data') / 'params.json')
     cfg = Config(Mcyc=1, Cp=500000, Cf=20000, phi=1.0, NARR=NARR,
-                 NMAX=NMAX, SMAX=SMAX, F_E=FS['F_E'], F_U=FS['F_U'])
+                 NMAX=NMAX, SMAX=SMAX, W=W, F_E=FS['F_E'], F_U=FS['F_U'])
     return Instance(types, price, cfg)
 
 
@@ -41,7 +41,9 @@ def _batch(I, n=512, seed=0):
     rng = np.random.default_rng(seed)
     sel = rng.choice(len(I.ST), size=min(n, len(I.ST)), replace=False)
     sel = np.sort(sel)
-    b = {k: tens[k][sel] for k in ('U', 'mu', 'S', 'ms', 'ctx', 'allow_u', 'allow_s')}
+    keys = ['U', 'mu', 'S', 'ms', 'ctx', 'allow_u', 'allow_s']
+    if 'wcap' in tens: keys.append('wcap')
+    b = {k: tens[k][sel] for k in keys}
     return tens, sel, b
 
 
@@ -73,7 +75,7 @@ def _legacy_ce(net, batch, lab_u, lab_s, cap):
 @pytest.mark.parametrize('NMAX,SMAX', [(2, 2), (3, 2)])
 def test_legacy_ce_unchanged(NMAX, SMAX):
     """carry=False 는 v5b 와 같은 손실을 낸다 — 기존 결과 재현성 보장."""
-    I = _inst(NMAX, SMAX)
+    I = _inst(NMAX=NMAX, SMAX=SMAX)
     tens, sel, b = _batch(I)
     LU, LS = labels_from_actions(I, tens, pol.index_myopic(I))   # 전 상태 → 부분집합
     lu = torch.as_tensor(LU[sel], device=DEV); ls = torch.as_tensor(LS[sel], device=DEV)
@@ -83,10 +85,16 @@ def test_legacy_ce_unchanged(NMAX, SMAX):
     assert torch.allclose(new, ref, rtol=0, atol=0), f'레거시 손실 불일치 {new} vs {ref}'
 
 
-@pytest.mark.parametrize('NMAX,SMAX', [(2, 2), (3, 2), (3, 3)])
-def test_decode_ce_carry_match(NMAX, SMAX):
-    """decode 의 축차 carry == carry_from_labels 의 누적합 carry."""
-    I = _inst(NMAX, SMAX)
+@pytest.mark.parametrize('kw', [dict(NMAX=2, SMAX=2), dict(NMAX=3, SMAX=2),
+                                dict(NMAX=3, SMAX=3), dict(W=3), dict(W=4)],
+                         ids=['N2S2', 'N3S2', 'N3S3', 'W3', 'W4'])
+def test_decode_ce_carry_match(kw):
+    """decode 의 축차 carry == carry_from_labels 의 누적합 carry.
+
+    W-정식화(잔여용량이 W 기준, 보유 미검사분도 자리를 먹음)에서도 걸어야 한다 —
+    두 경로의 정의가 갈리면 학습과 추론이 다른 함수가 된다.
+    """
+    I = _inst(**kw)
     tens, sel, b = _batch(I)
     torch.manual_seed(0); net = PolicyNet(carry=True).to(DEV)
     au, as_, cU_dec, cS_dec = net.decode(b, I.CAP, return_carry=True)
@@ -97,15 +105,16 @@ def test_decode_ce_carry_match(NMAX, SMAX):
     assert torch.allclose(cS_dec, cS_lab, atol=1e-6), '선별축 carry 불일치'
 
 
-@pytest.mark.parametrize('NMAX,SMAX', [(2, 2), (3, 2)])
-def test_teacher_forcing_reproduces_decode(NMAX, SMAX):
+@pytest.mark.parametrize('kw', [dict(NMAX=2, SMAX=2), dict(NMAX=3, SMAX=2), dict(W=4)],
+                         ids=['N2S2', 'N3S2', 'W4'])
+def test_teacher_forcing_reproduces_decode(kw):
     """교사강요 로짓의 argmax(마스크 적용)가 decode 의 선택과 같다.
 
     carry 정의가 같으므로, 자기 출력을 라벨로 넣으면 학습 경로가 보는 로짓은
     추론 경로가 본 로짓과 같아야 한다. 레거시는 decode 가 초기 예산만 쓰기 때문에
     이 성질이 성립하지 않는다 — 그래서 carry=True 에서만 건다.
     """
-    I = _inst(NMAX, SMAX)
+    I = _inst(**kw)
     tens, sel, b = _batch(I)
     torch.manual_seed(0); net = PolicyNet(carry=True).to(DEV)
     au, as_ = net.decode(b, I.CAP)

@@ -7,8 +7,17 @@ SCALE = 1e6
 
 
 def state_tensors(I, device='cuda', dtype=torch.float32):
-    """전 상태를 한 번에 패딩 텐서로. U_max = NMAX*nT, S_max = SMAX (둘 다 작은 상수)"""
-    nT = len(I.TY); Um = I.cfg.NMAX*nT; Sm = I.cfg.SMAX; F = 6
+    """전 상태를 한 번에 패딩 텐서로.
+
+    기존 정식화: U_max = NMAX*nT, S_max = SMAX.
+    W-정식화   : 두 재고가 창고 하나를 나눠 쓰므로 각 축의 최대 점유가 W 다.
+                 (Σn ≤ W 이고 |sc| ≤ W). 잔여용량 신호용으로 wcap 도 함께 낸다.
+    """
+    nT = len(I.TY); F = 6
+    if I.W is None:
+        Um = I.cfg.NMAX*nT; Sm = I.cfg.SMAX
+    else:
+        Um = Sm = I.W
     nS = len(I.ST)
     U = np.zeros((nS, Um, F), np.float32); mu = np.zeros((nS, Um), np.float32)
     S = np.zeros((nS, Sm, F), np.float32); ms = np.zeros((nS, Sm), np.float32)
@@ -45,10 +54,13 @@ def state_tensors(I, device='cuda', dtype=torch.float32):
         tot = sum(n) + len(scr)
         ctx[si] = [sum(n)/max(Um,1), len(scr)/max(Sm,1), I.CAP/max(Um+Sm,1), tot/max(Um+Sm,1)]
     T = lambda a, d=dtype: torch.as_tensor(a, device=device, dtype=d)
-    return dict(U=T(U), mu=T(mu), S=T(S), ms=T(ms), ctx=T(ctx),
-                allow_u=torch.as_tensor(au, device=device),
-                allow_s=torch.as_tensor(as_, device=device),
-                slot_t=slot_t, slot_j=slot_j)
+    out = dict(U=T(U), mu=T(mu), S=T(S), ms=T(ms), ctx=T(ctx),
+               allow_u=torch.as_tensor(au, device=device),
+               allow_s=torch.as_tensor(as_, device=device),
+               slot_t=slot_t, slot_j=slot_j)
+    if I.W is not None:
+        out['wcap'] = T(np.full(nS, float(I.W), np.float32))
+    return out
 
 
 def assign_to_action(I, st, slot_t_row, slot_j_row, au_row, as_row):

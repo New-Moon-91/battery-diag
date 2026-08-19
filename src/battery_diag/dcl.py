@@ -16,6 +16,13 @@ from .net import PolicyNet
 from .encode import state_tensors, actions_from_assign, labels_from_actions
 from .ckpt import Checkpoint, rng_state, set_rng_state
 
+# 헤드·인코더가 보는 배치 키. wcap 은 W-정식화에서만 존재한다.
+BKEYS = ('U', 'mu', 'S', 'ms', 'ctx', 'allow_u', 'allow_s')
+
+
+def _bk(tens):
+    return BKEYS + (('wcap',) if 'wcap' in tens else ())
+
 
 def fit_epochs(net, opt, tens, LU, LS, cap, w=None, epochs=40, bs=512, gen=None):
     nS = LU.shape[0]
@@ -28,7 +35,7 @@ def fit_epochs(net, opt, tens, LU, LS, cap, w=None, epochs=40, bs=512, gen=None)
                else torch.multinomial(p, nS, replacement=True, generator=gen))
         for b0 in range(0, nS, bs):
             sel = idx[b0:b0+bs]
-            batch = {k: tens[k][sel] for k in ('U','mu','S','ms','ctx','allow_u','allow_s')}
+            batch = {k: tens[k][sel] for k in _bk(tens)}
             loss = net.ce_loss(batch, LUt[sel], LSt[sel], cap)
             opt.zero_grad(set_to_none=True); loss.backward()
             torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0); opt.step()
@@ -40,7 +47,7 @@ def greedy_policy(net, I, tens, bs=4096):
     nS = len(I.ST); AU, AS = [], []
     for b0 in range(0, nS, bs):
         sl = slice(b0, min(b0+bs, nS))
-        batch = {k: tens[k][sl] for k in ('U','mu','S','ms','ctx','allow_u','allow_s')}
+        batch = {k: tens[k][sl] for k in _bk(tens)}
         au, as_ = net.decode(batch, I.CAP)
         AU.append(au); AS.append(as_)
     return actions_from_assign(I, tens, np.concatenate(AU), np.concatenate(AS))

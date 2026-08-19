@@ -14,7 +14,7 @@
 from __future__ import annotations
 import itertools, json
 import numpy as np
-from math import erf, sqrt
+from math import erf, sqrt, factorial
 from dataclasses import dataclass, field
 
 _Phi = lambda z: 0.5 * (1 + erf(z / sqrt(2)))
@@ -49,8 +49,9 @@ class Config:
     Tp: float = 14.0
     Thold: float = 24.0
     sig_f: float = 0.05       # EIS SOH 추정 오차
-    NMAX: int = 2             # 유형별 미검사 버퍼 상한
-    SMAX: int = 2             # 선별완료 버퍼 상한
+    NMAX: int = 2             # 유형별 미검사 버퍼 상한 (W=None 일 때만 유효)
+    SMAX: int = 2             # 선별완료 버퍼 상한 (W=None 일 때만 유효)
+    W: int | None = None      # 창고 총 수용 대수. 지정하면 W-정식화
     SB: int = 3               # 신호 구간 수
     prune: bool = True
     F_E: float = 278/354      # 신속검사 확정 판별 결함 비중
@@ -102,14 +103,78 @@ class Instance:
         self.SDUMP = {x for x in self.SIT if c.prune and self.VPS[x] <= self.VS[x[0]]}
         self.PUOK  = {t for t in self.TY if self.VPU[t] > self.VS[t] and t not in self.DUMP}
         # 상태공간
-        self.SCR = [()] + [tuple(sorted(x)) for k in range(1, c.SMAX+1)
-                           for x in itertools.combinations_with_replacement(self.SIT, k)]
-        self.NV = list(itertools.product(range(c.NMAX+1), repeat=len(self.TY)))
-        self.ST = [(n, sc) for n in self.NV for sc in self.SCR]
+        self.W = c.W
+        if self.W is None:
+            self.SCR = [()] + [tuple(sorted(x)) for k in range(1, c.SMAX+1)
+                               for x in itertools.combinations_with_replacement(self.SIT, k)]
+            self.NV = list(itertools.product(range(c.NMAX+1), repeat=len(self.TY)))
+            self.ST = [(n, sc) for n in self.NV for sc in self.SCR]
+        else:
+            W = self.W; nT = len(self.TY)
+            scr_k = [[()] if k == 0 else
+                     [tuple(sorted(x)) for x in
+                      itertools.combinations_with_replacement(self.SIT, k)]
+                     for k in range(W+1)]
+            self.SCR = [sc for k in range(W+1) for sc in scr_k[k]]
+            self.NV = [n for s in range(W+1)
+                       for n in itertools.product(range(s+1), repeat=nT) if sum(n) == s]
+            self.ST = [(n, sc) for n in self.NV
+                       for k in range(W - sum(n) + 1) for sc in scr_k[k]]
+            # 강제매각 순서: 재활용 매각가치 p_rc*kWh 가 낮은 차종부터
+            self._sell_order = sorted(range(nT), key=lambda k: self.VS[self.TY[k]])
+            self._ARRP = self._arr_dist()
+            self._arrw = {}
         self.SI = {x: i for i, x in enumerate(self.ST)}
         self._acts = {}
 
-    # ---------- 도착 ----------
+    # ---------- 도착 (W-정식화) ----------
+    def _arr_dist(self):
+        """NARR 슬롯 도착의 차종별 개수 분포 — (개수벡터, 확률) 목록.
+
+        각 슬롯은 확률 lam 로 도착하고 차종은 MIX 를 따른다. 슬롯이 독립이므로
+        개수벡터는 다항분포다. 기존 arr() 의 축차 합성곱과 달리 유형별 상한이
+        없으므로 닫힌 형태로 한 번에 만든다.
+        """
+        c = self.cfg; nT = len(self.TY)
+        ps = [c.lam*self.MIX[t] for t in self.TY]; p0 = 1 - c.lam
+        out = []
+        for a in itertools.product(range(c.NARR+1), repeat=nT):
+            A = sum(a)
+            if A > c.NARR: continue
+            coef = factorial(c.NARR)
+            for x in a: coef //= factorial(x)
+            coef //= factorial(c.NARR - A)
+            pr = coef * p0**(c.NARR-A)
+            for k in range(nT): pr *= ps[k]**a[k]
+            if pr > 0: out.append((a, pr))
+        return out
+
+    def _arr_slack(self, slack):
+        """잔여 자리 slack 에서의 (확률, 수용 개수벡터, 강제매각 수익).
+
+        도착이 slack 을 넘치면 초과분은 미검사 상태로 즉시 재활용 매각된다.
+        어느 것을 파는지는 정책이 아니라 규칙이 정한다 — 매각가치가 낮은 차종부터.
+        (회피하려면 정책이 미리 팔아 자리를 비우면 된다. 그 회피 행동이 곧 결과다.)
+        """
+        if slack in self._arrw: return self._arrw[slack]
+        nT = len(self.TY); agg = {}
+        for a, pr in self._ARRP:
+            excess = sum(a) - slack
+            rev = 0.0
+            if excess > 0:
+                aa = list(a)
+                for k in self._sell_order:
+                    if excess <= 0: break
+                    take = min(aa[k], excess)
+                    aa[k] -= take; excess -= take; rev += take*self.VS[self.TY[k]]
+                a = tuple(aa)
+            key = (a, rev)
+            agg[key] = agg.get(key, 0.) + pr
+        out = [(p, a, rev) for (a, rev), p in agg.items()]
+        self._arrw[slack] = out
+        return out
+
+    # ---------- 도착 (기존 NMAX 정식화) ----------
     def arr(self, n):
         o = {tuple(n): 1.0}
         for _ in range(self.cfg.NARR):
@@ -178,20 +243,31 @@ class Instance:
                 for p0, sc, rr in combos:
                     nxt.append((p0*pdet, sc, rr+self.VS[t]))          # 결함 검출 → 재활용
                     for b in range(c.SB):
-                        if len(sc) < c.SMAX:
+                        # W-정식화에서는 신속검사가 미검사→선별완료 이동일 뿐이라
+                        # 총 점유가 변하지 않는다. 넘칠 자리가 없으므로 강제매각도 없다.
+                        if self.W is not None or len(sc) < c.SMAX:
                             nxt.append((p0*(1-pdet)*pb[b], tuple(sorted(sc+((t,b),))), rr))
                         else:                                          # 선별버퍼 초과 → 즉시 매각
                             nxt.append((p0*(1-pdet)*pb[b], sc, rr+self.VS[t]))
                 combos = nxt
         out = []
+        nT = len(self.TY)
         for p0, sc, rr in combos:
-            hc = c.h*(sum(rem) + len(sc))
-            for nn, pa in self.arr(tuple(rem)):
-                out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc))
+            occ = sum(rem) + len(sc)
+            hc = c.h*occ                       # 보관비는 도착 전 점유에 부과
+            if self.W is None:
+                for nn, pa in self.arr(tuple(rem)):
+                    out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc))
+            else:
+                for pa, aa, rev in self._arr_slack(self.W - occ):
+                    nn = tuple(rem[k]+aa[k] for k in range(nT))
+                    out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc+rev))
         return out
 
     def summary(self):
-        return dict(nS=len(self.ST), nA=self.n_actions(), CAP=self.CAP, Hslot=self.Hslot,
-                    lam_eff=self.cfg.lam*self.cfg.NARR,
-                    selectivity=self.CAP/(self.cfg.NMAX*len(self.TY)+self.cfg.SMAX),
-                    REG=dict(self.REG))
+        cap_tot = self.W if self.W is not None else (self.cfg.NMAX*len(self.TY)+self.cfg.SMAX)
+        d = dict(nS=len(self.ST), nA=self.n_actions(), CAP=self.CAP, Hslot=self.Hslot,
+                 lam_eff=self.cfg.lam*self.cfg.NARR,
+                 selectivity=self.CAP/cap_tot, REG=dict(self.REG))
+        if self.W is not None: d['W'] = self.W
+        return d

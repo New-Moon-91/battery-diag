@@ -121,12 +121,24 @@ class PolicyNet(nn.Module):
         nscr = ms.sum(1, keepdim=True)
         remU = mu.flip(1).cumsum(1).flip(1)                 # 자기 포함 남은 유효 슬롯
         remS = ms.flip(1).cumsum(1).flip(1)
-        freeU = Sm - nscr - prevFastU
-        freeS = Sm - (nscr - prevSellS - prevPrecS) - totFastU
+        # 잔여 저장용량. 기존 정식화는 선별버퍼 SMAX(=Sm) 가 제약이고,
+        # W-정식화는 창고 하나(W)를 미검사·선별완료가 나눠 쓴다. 후자에서는
+        # 보유(HOLD)한 미검사분도 자리를 먹으므로 함께 센다.
+        if 'wcap' in batch:
+            W = batch['wcap'].unsqueeze(-1)
+            prevHoldU = prevU4[..., 3]
+            totHoldU = oneU[..., 3].sum(1, keepdim=True)
+            cap_ref = W
+            freeU = W - nscr - prevFastU - prevHoldU
+            freeS = W - (nscr - prevSellS - prevPrecS) - totFastU - totHoldU
+        else:
+            cap_ref = float(max(Sm, 1))
+            freeU = Sm - nscr - prevFastU
+            freeS = Sm - (nscr - prevSellS - prevPrecS) - totFastU
         cU = torch.cat([prevU4/max(Um,1), (budU/max(cap,1)).unsqueeze(-1),
-                        (freeU/max(Sm,1)).unsqueeze(-1), (remU/max(Um,1)).unsqueeze(-1)], -1)
+                        (freeU/cap_ref).unsqueeze(-1), (remU/max(Um,1)).unsqueeze(-1)], -1)
         cS = torch.cat([prevS3/max(Sm,1), (budS/max(cap,1)).unsqueeze(-1),
-                        (freeS/max(Sm,1)).unsqueeze(-1), (remS/max(Sm,1)).unsqueeze(-1)], -1)
+                        (freeS/cap_ref).unsqueeze(-1), (remS/max(Sm,1)).unsqueeze(-1)], -1)
         return cU, cS, mU, mS
 
     def _logits(self, head, z, feat, bud):
@@ -174,16 +186,20 @@ class PolicyNet(nn.Module):
         nscr = ms.sum(1)
         remU = mu.flip(1).cumsum(1).flip(1)
         remS = ms.flip(1).cumsum(1).flip(1)
+        wmode = 'wcap' in batch
+        Wt = batch['wcap'] if wmode else None
+        cap_ref = Wt if wmode else float(max(Sm, 1))
         cntU = torch.zeros(B, 4, device=U.device, dtype=dt)
         cntS = torch.zeros(B, 3, device=U.device, dtype=dt)
         prevPrecU = torch.zeros(B, device=U.device, dtype=dt)
         prevFastU = torch.zeros(B, device=U.device, dtype=dt)
+        prevHoldU = torch.zeros(B, device=U.device, dtype=dt)
         cUs, cSs = [], []
         for i in range(Um):
             budU = cap - prevPrecU
-            freeU = Sm - nscr - prevFastU
+            freeU = (Wt - nscr - prevFastU - prevHoldU) if wmode else (Sm - nscr - prevFastU)
             c = torch.cat([cntU/max(Um,1), (budU/max(cap,1)).unsqueeze(-1),
-                           (freeU/max(Sm,1)).unsqueeze(-1),
+                           (freeU/cap_ref).unsqueeze(-1),
                            (remU[:, i]/max(Um,1)).unsqueeze(-1)], -1)
             cUs.append(c)
             lg = self.headU(torch.cat([z, U[:, i], c], -1))
@@ -195,14 +211,16 @@ class PolicyNet(nn.Module):
             cntU = cntU + F.one_hot(a, 4).to(dt) * v.unsqueeze(-1)
             prevPrecU = prevPrecU + (a == 2).to(dt) * v
             prevFastU = prevFastU + (a == 1).to(dt) * v
-        totPrecU, totFastU = prevPrecU, prevFastU
+            prevHoldU = prevHoldU + (a == 3).to(dt) * v
+        totPrecU, totFastU, totHoldU = prevPrecU, prevFastU, prevHoldU
         prevSellS = torch.zeros(B, device=U.device, dtype=dt)
         prevPrecS = torch.zeros(B, device=U.device, dtype=dt)
         for j in range(Sm):
             budS = cap - totPrecU - prevPrecS
-            freeS = Sm - (nscr - prevSellS - prevPrecS) - totFastU
+            freeS = ((Wt - (nscr - prevSellS - prevPrecS) - totFastU - totHoldU) if wmode
+                     else (Sm - (nscr - prevSellS - prevPrecS) - totFastU))
             c = torch.cat([cntS/max(Sm,1), (budS/max(cap,1)).unsqueeze(-1),
-                           (freeS/max(Sm,1)).unsqueeze(-1),
+                           (freeS/cap_ref).unsqueeze(-1),
                            (remS[:, j]/max(Sm,1)).unsqueeze(-1)], -1)
             cSs.append(c)
             lg = self.headS(torch.cat([z, S[:, j], c], -1))

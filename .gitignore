@@ -28,3 +28,9 @@ results/**
 !results/sweep_selectivity/
 
 !results/sweep_selectivity/*.csv
+
+!results/w_model/
+
+!results/w_model/*.csv
+
+!results/w_model/*.md
