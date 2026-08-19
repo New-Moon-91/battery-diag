@@ -5,9 +5,18 @@
 #   확인:  nvidia-smi  → Processes 에 Xorg 가 어느 GPU 에 붙었는지 볼 것
 #   GPU 0 에 디스플레이가 없다면 gpus: [0, 1] 로 되돌려도 된다.
 out: /home/data/batdiag/results/sweep_selectivity
+# CSR 캐시는 NVMe(/) 로. /home/data 는 회전 디스크라 NMAX=3/SMAX=3 의 53GB CSR 을
+# 정책반복마다 다시 읽으면 디스크 대역에 묶인다. 이 경로에 기존 캐시가 모두 있어
+# 재빌드가 일어나지 않는다 (stream_0f5d3222a9e1a586 = N3S3, trans_*.npz = 나머지).
+cache: /home/user/batdiag-cache
 gpus: [1]
 per_gpu: 1
 base: {Mcyc: 1, Cp: 500000, Cf: 20000, phi: 1.0, NARR: 4, seed: 0}
 grid:
   NMAX: [2, 3]
   SMAX: [2, 3, 4]
+  seed: [0, 1, 2]
+skip:
+  # NMAX=3/SMAX=4 는 nS=45,760 / n_sa≈17.9M / nnz≈18.8G (CSR≈225GB, v5a 표본추정).
+  # 빌드만 1.5~2시간 규모라 별도 판단 전까지 그리드에서 뺀다.
+  - {NMAX: 3, SMAX: 4}

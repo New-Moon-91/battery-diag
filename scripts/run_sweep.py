@@ -10,6 +10,13 @@ from battery_diag.runner import expand_grid, run_grid
 
 cfgpath = Path(sys.argv[1]); spec = yaml.safe_load(cfgpath.read_text())
 cfgs = list(expand_grid(spec.get('base', {}), spec['grid']))
+# skip: 그리드 곱에서 빼낼 조합. 명시한 키가 모두 일치하는 설정을 제외한다.
+skip = spec.get('skip') or []
+if skip:
+    keep = [c for c in cfgs if not any(all(c.get(k) == v for k, v in s.items()) for s in skip)]
+    print(f'skip 규칙 {len(skip)}개 → {len(cfgs)}개 중 {len(cfgs)-len(keep)}개 제외')
+    cfgs = keep
 run_grid(cfgs, str(Path(__file__).resolve().parent/'run_one.py'),
          spec.get('out', f'/home/data/batdiag/results/{cfgpath.stem}'),
-         gpus=tuple(spec.get('gpus', [0, 1])), per_gpu=spec.get('per_gpu', 2))
+         gpus=tuple(spec.get('gpus', [0, 1])), per_gpu=spec.get('per_gpu', 2),
+         cache=spec.get('cache'))

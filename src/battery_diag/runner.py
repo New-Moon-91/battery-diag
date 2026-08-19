@@ -27,25 +27,27 @@ def job_id(cfg: dict) -> str:
 
 
 def _worker(args):
-    cfg, script, out_root, gpu = args
+    cfg, script, out_root, gpu, cache = args
     env = dict(os.environ)
     env['CUDA_VISIBLE_DEVICES'] = str(gpu)
     env['OMP_NUM_THREADS'] = '4'
     jid = job_id(cfg)
     cmd = [sys.executable, script, '--config-json', json.dumps(cfg),
            '--out', str(Path(out_root)/jid), '--job-id', jid]
+    if cache: cmd += ['--cache', str(cache)]
     t0 = time.time()
     p = subprocess.run(cmd, env=env, capture_output=True, text=True)
     return dict(job=jid, gpu=gpu, rc=p.returncode, sec=time.time()-t0,
                 tail=(p.stdout or '')[-2000:], err=(p.stderr or '')[-2000:])
 
 
-def run_grid(cfgs, script, out_root, gpus=(0, 1), per_gpu=2, log=print):
+def run_grid(cfgs, script, out_root, gpus=(0, 1), per_gpu=2, log=print, cache=None):
     out_root = Path(out_root); out_root.mkdir(parents=True, exist_ok=True)
     todo = [c for c in cfgs if not (out_root/job_id(c)/'DONE.json').exists()]
     log(f'전체 {len(cfgs)}개 중 미완료 {len(todo)}개 실행 '
         f'(GPU {list(gpus)} x {per_gpu} = 워커 {len(gpus)*per_gpu}개)')
-    args = [(c, script, str(out_root), gpus[i % len(gpus)]) for i, c in enumerate(todo)]
+    if cache: log(f'CSR 캐시 {cache}')
+    args = [(c, script, str(out_root), gpus[i % len(gpus)], cache) for i, c in enumerate(todo)]
     res = []
     with ProcessPoolExecutor(max_workers=len(gpus)*per_gpu) as ex:
         for r in ex.map(_worker, args):
