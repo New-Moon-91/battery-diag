@@ -49,13 +49,13 @@ def _cfg_key(cfg):
 # 다만 _LATE_FIELDS 와 같은 요령으로, 구 파라미터(v5)와 정확히 같을 때는 키에서 빼서
 # "가격이 해시에 없던 시절" 의 사전을 복원한다. 그래야 379GB 짜리 기존 캐시가
 # data/params_v5.json 재현용으로 그대로 살아 있다.
-_PRICE_V5 = (8.256862475075309, 1.5815474565093999, 2.8545182109885903,
-             1.5666485932513265, -0.9472082008955554, 0.545511013478258, 8708.0)
+# 키 계산은 가격 클래스가 스스로 한다 (PriceParams.key / PriceW5.key).
+# w5 에서 가격구조가 2층 → 직접회귀로 바뀌면서 필드 집합 자체가 달라졌기 때문에
+# build.py 가 필드 이름을 알고 있으면 안 된다.
 
 
 def _price_key(pp):
-    v = (pp.g_c0, pp.g_cap, pp.g_s, pp.M_c0, pp.M_s, pp.M_sd, pp.p_rc)
-    return {} if v == _PRICE_V5 else {'price': list(v)}
+    return pp.key()
 
 
 def _init(inst):

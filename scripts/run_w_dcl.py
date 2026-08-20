@@ -11,18 +11,18 @@ import sys, json, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
-# w4 [2] 확정 인스턴스. 근거는 battery_diag.data.SEL_W4 주석 참조.
-from battery_diag.data import SEL_W4 as SEL
+# w5 확정 인스턴스. 근거는 battery_diag.data.SEL_W5 주석 참조.
+from battery_diag.data import SEL_W5 as SEL
 import os
 CACHE = os.environ.get('BATDIAG_CACHE', '/home/user/batdiag-cache')
 OUT = Path(os.environ.get('BATDIAG_OUT',
-           Path(__file__).resolve().parents[1]/'results'/'w4'))
+           Path(__file__).resolve().parents[1]/'results'/'w5'))
 
 
 def main():
     import numpy as np, torch
-    from battery_diag.data import load_cached
-    from battery_diag.instance import Instance, PriceParams, Config
+    from battery_diag.data import load_cached, fleet_w5
+    from battery_diag.instance import Instance, PriceW5, Config
     from battery_diag.build import build
     from battery_diag.streambuild import build_stream
     from battery_diag.exact import ExactSolver
@@ -34,11 +34,12 @@ def main():
     W = int(sys.argv[1]); dec = sys.argv[2]
     seeds = [int(x) for x in sys.argv[3:]] or [0]
     root = Path(__file__).resolve().parents[1]
-    FLEET, FS = load_cached(str(root/'data'))
+    _, FS = load_cached(str(root/'data'))
+    FLEET = fleet_w5(root/'data', sel=SEL)
     tot = sum(FLEET[t][0] for t in SEL)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0]/tot)
              for t in SEL}
-    price = PriceParams.from_json(root/'data'/'params.json')
+    price = PriceW5.from_json(root/'data'/'params_w5.json')
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     cfg = Config(Mcyc=1, Cp=500000, Cf=20000, phi=1.0, NARR=4, W=W,
                  F_E=FS['F_E'], F_U=FS['F_U'])

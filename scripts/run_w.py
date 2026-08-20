@@ -23,17 +23,18 @@
 import sys, json, time, os, argparse
 from pathlib import Path
 
-# w4 [2] 확정 인스턴스. 목록의 근거는 battery_diag.data.SEL_W4 주석 참조.
+# w5 확정 인스턴스. 목록의 근거는 battery_diag.data.SEL_W5 주석 참조.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
-from battery_diag.data import SEL_W4 as SEL
+from battery_diag.data import SEL_W4, SEL_W5
+SEL = SEL_W5
 CACHE = os.environ.get('BATDIAG_CACHE', '/home/user/batdiag-cache')
-OUT = Path(__file__).resolve().parents[1]/'results'/'w_model'
+OUT = Path(__file__).resolve().parents[1]/'results'/'w5'
 
 
 def main():
     import numpy as np, torch
-    from battery_diag.data import load_cached
-    from battery_diag.instance import Instance, PriceParams, Config
+    from battery_diag.data import load_cached, fleet_w5
+    from battery_diag.instance import Instance, PriceParams, PriceW5, Config
     from battery_diag.build import build
     from battery_diag.streambuild import build_stream
     from battery_diag.exact import ExactSolver
@@ -41,21 +42,30 @@ def main():
     from battery_diag import policies as pol
 
     ap = argparse.ArgumentParser()
-    ap.add_argument('--types', default=','.join(SEL), help='차종 목록 (쉼표)')
+    ap.add_argument('--types', default='', help='유형 목록 (쉼표). 비우면 --fleet 기본값')
+    ap.add_argument('--fleet', default='w5', choices=('w4', 'w5'),
+                    help='w5=차종×용량 유형표(types_w5.json), w4=차종 단위(pool.csv)')
+    ap.add_argument('--params', default='', help='가격 파라미터 json (비우면 fleet 기본값)')
     ap.add_argument('--tag', default='', help='출력 파일 접두 (예: T4 → T4_W6.json)')
     ap.add_argument('--dry', action='store_true', help='규모 추정만 하고 빌드하지 않는다')
     ap.add_argument('--outdir', default=str(OUT), help='출력 디렉터리')
     ap.add_argument('Ws', nargs='+', type=int)
     args = ap.parse_args()
-    sel = args.types.split(',')
+    root = Path(__file__).resolve().parents[1]
+    sel = args.types.split(',') if args.types else list(SEL_W5 if args.fleet == 'w5' else SEL_W4)
     globals()['SEL'] = sel
 
-    root = Path(__file__).resolve().parents[1]
-    FLEET, FS = load_cached(str(root/'data'))
+    # 결함 비중(F_E/F_U)은 어느 쪽이든 구자료 recycle_post.csv 에서 온다.
+    FLEET4, FS = load_cached(str(root/'data'))
+    FLEET = fleet_w5(root/'data', sel=sel) if args.fleet == 'w5' else FLEET4
     tot = sum(FLEET[t][0] for t in sel)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0]/tot)
              for t in sel}
-    price = PriceParams.from_json(root/'data'/'params.json')
+    pf = Path(args.params) if args.params else \
+        root/'data'/('params_w5.json' if args.fleet == 'w5' else 'params.json')
+    price = (PriceW5 if 'reuse_c0' in json.load(open(pf, encoding='utf-8'))
+             else PriceParams).from_json(pf)
+    print(f'[{args.fleet}] 유형 {sel}  가격 {pf.name} ({type(price).__name__})', flush=True)
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     out = Path(args.outdir); out.mkdir(parents=True, exist_ok=True)
     pre = (args.tag + '_') if args.tag else ''

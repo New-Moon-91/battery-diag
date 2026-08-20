@@ -26,9 +26,15 @@ class PriceParams:
 
     w4 재캘리브레이션(2026-08) 이후 **M_s = 0** 이다. 낙찰배수가 SOH 에 의존하지
     않는다는 뜻이다. 근거: 2024-01 이후 실거래에서 낙찰배수를 SOH 로 회귀하면
-    R^2 = 0.0008 이고 부호도 기존 추정(-0.9472)과 반대다. 낙찰배수를 실제로 움직이는
-    것은 입찰참가자 수(ln 참가자수 계수 +0.284, R^2=0.074 — 참가자 1명당 약 +9%)인데
-    이는 모형 외생이므로 M_s=0 으로 두고 로그정규 잡음의 평균만 맞춘다.
+    R^2 = 0.0009 이고 부호도 기존 추정(-0.9472)과 반대다. 낙찰배수를 실제로 움직이는
+    것은 입찰참가자 수인데 이는 모형 외생이므로 M_s=0 으로 두고 로그정규 잡음의
+    평균만 맞춘다.
+
+    참가자수 회귀의 창을 정정한다 (w5 에서 원자료로 재현하며 확인).
+      전기간 273건 : ln(참가자수) 계수 +0.2841, R^2=0.0736  (2명 1.83배 → 9명 2.81배)
+      2024~  94건 : 계수 +0.2713, R^2=0.0521  (2명 1.92배 → 9명 2.89배)
+    정합성 메모 §2.1 과 w4 는 앞의 값(+0.284, R^2=0.074)을 «2024-01 이후» 절에
+    적었으나 그것은 전기간 값이다. 결론은 어느 창에서도 같다.
     따라서 Erev 의 SOH 의존성은 전부 헤도닉 g 의 g_s 항에서 나온다.
     exp(M_s*s) 항은 항등적으로 1 이 되지만 식은 그대로 둔다 — 구 파라미터
     (data/params_v5.json) 로 기존 결과를 재현할 때 같은 코드 경로를 쓰기 위해서다.
@@ -44,6 +50,99 @@ class PriceParams:
         return np.exp(self.g_c0 + self.g_cap*np.log(cap) + self.g_s*np.log(np.clip(s,1e-3,None)))
     def Erev(self, s, cap):
         return np.exp(self.M_c0 + self.M_s*s + 0.5*self.M_sd**2) * self.g(s, cap)
+    def VS(self, cap):
+        """재활용 매각가치. 용량에 선형이라고 본 판이다 — w5 에서 폐기된다."""
+        return self.p_rc * cap
+    def key(self):
+        v = (self.g_c0, self.g_cap, self.g_s, self.M_c0, self.M_s, self.M_sd, self.p_rc)
+        return {} if v == _PRICE_V5 else {'price': list(v)}
+
+
+# 구 파라미터(v5)의 7-튜플. 이 값과 정확히 같을 때만 캐시 해시에서 가격을 빼서
+# "가격이 해시에 없던 시절" 의 사전을 복원한다 — 379GB 짜리 기존 캐시를 살리기 위해서다.
+_PRICE_V5 = (8.256862475075309, 1.5815474565093999, 2.8545182109885903,
+             1.5666485932513265, -0.9472082008955554, 0.545511013478258, 8708.0)
+
+
+@dataclass
+class PriceW5:
+    """w5 가격구조: 실거래 낙찰가 **직접회귀**. 2층(예정가×낙찰배수) 구조를 폐기한다.
+
+    폐기 이유. w4 재캘리브레이션에서 낙찰배수의 SOH 계수가 0 이 되면서(R²=0.0008,
+    부호도 반대) 낙찰배수가 상수 잡음일 뿐이 됐다. 층을 나눌 의미가 사라졌으므로
+    예정가격을 거치지 않고 낙찰가를 바로 회귀한다.
+
+        ln P_reuse   = c0 + a·ln(cap) + b·ln(s) + c·ln(P_Li) + ε,  ε~N(0, σ²)
+        ln V_recycle = d0 + e·ln(cap)           + f·ln(P_Li) + η,  η~N(0, τ²)
+
+    **시점 효과를 리튬 시세로 설명한다.** 재활용가가 3~6배 변동한 것은 없앨
+    노이즈가 아니라 설명해야 할 신호다. 월 더미 대신 리튬을 직접 넣으면 재활용
+    R² 가 0.742(용량만) → 0.827 로, 월FE 상한 0.916 과의 격차를 절반가량 메운다.
+    코발트는 넣지 않는다 — 계수가 음수로 나와 경제적 의미가 없고 27개 시점의
+    다중공선성이 만든 인공물로 판단된다.
+
+    리튬은 자료기간 시점평균 `Li_ref` 에 고정한다. 즉 **평균적 리튬 시세를 가정한
+    정상상태 분석**이다. 리튬 탄력성이 재활용(0.501)이 재사용(0.295)보다 크므로
+    리튬 강세기에는 두 채널의 격차가 좁아져 검사 유인이 줄어든다. 그 동학은
+    실물옵션 등 후속 확장의 몫이다.
+
+    **로그정규 보정 (`smear`).** 회귀가 ln 스케일이므로 exp(Xβ) 는 중앙값이지
+    기댓값이 아니다. MDP 는 기대보상을 최대화하므로 기댓값
+    E[P|X] = exp(Xβ + σ²/2) 를 써야 한다 (Duan smearing). 구 코드의 Erev 도
+    같은 이유로 `0.5*M_sd**2` 를 달고 있었다. 보정은 재사용 +13.4%,
+    재활용 +14.3% 의 수준 이동이고 σ 가 두 층에서 비슷해 **배율은 거의 불변**이다
+    (0.8% 차). smear=False 로 두면 정합성 메모의 `*_c0_eff` 와 같은 중앙값 판이 된다.
+    """
+    reuse_c0: float; reuse_cap: float; reuse_s: float; reuse_li: float; reuse_sd: float
+    recyc_c0: float; recyc_cap: float; recyc_li: float; recyc_sd: float
+    Li_ref: float
+    smear: bool = True
+
+    @classmethod
+    def from_json(cls, path):
+        d = json.load(open(path, encoding='utf-8'))
+        return cls(d['reuse_c0'], d['reuse_cap'], d['reuse_s'], d['reuse_li'], d['reuse_sd'],
+                   d['recyc_c0'], d['recyc_cap'], d['recyc_li'], d['recyc_sd'],
+                   d['Li_ref'], bool(d.get('smear', True)))
+
+    # 리튬을 기준값에 고정해 상수항에 접어 넣은 유효 절편.
+    @property
+    def _re0(self):
+        return (self.reuse_c0 + self.reuse_li*np.log(self.Li_ref)
+                + (0.5*self.reuse_sd**2 if self.smear else 0.0))
+
+    @property
+    def _rc0(self):
+        return (self.recyc_c0 + self.recyc_li*np.log(self.Li_ref)
+                + (0.5*self.recyc_sd**2 if self.smear else 0.0))
+
+    def Erev(self, s, cap):
+        """정밀검사 통과 후 재사용 채널 기대 낙찰가 (팩당, 원)."""
+        return np.exp(self._re0 + self.reuse_cap*np.log(cap)
+                      + self.reuse_s*np.log(np.clip(s, 1e-3, None)))
+
+    def VS(self, cap):
+        """재활용 매각가치 (팩당, 원).
+
+        구 판의 `p_rc * cap` 은 용량 지수를 1.0 으로 못박은 것인데, 실측 지수는
+        월FE 통제하에 1.187 (t=24.8, R²=0.916) 이다. 즉 pooled p_rc 는 대용량 팩의
+        재활용 가치를 과소평가한다. 여기서는 지수를 자유롭게 추정한 값으로 쓴다.
+
+        한계: 원리적으로 회수가치를 정하는 것은 화학조성이지만, 한국 시장에서는
+        조성과 용량이 거의 같은 변수라(LFP 용량중앙 16kWh, NCM 59.4kWh) 둘을 함께
+        넣으면 NCM 더미가 유의성을 잃고 부호가 뒤집힌다 — 식별 불가. 용량을
+        대리변수로 쓴다.
+        """
+        return np.exp(self._rc0 + self.recyc_cap*np.log(cap))
+
+    def p_rc_at(self, cap):
+        """참고용 kWh당 재활용 단가. 용량에 의존한다 (지수가 1이 아니므로)."""
+        return self.VS(cap)/cap
+
+    def key(self):
+        return {'price_w5': [self.reuse_c0, self.reuse_cap, self.reuse_s, self.reuse_li,
+                             self.reuse_sd, self.recyc_c0, self.recyc_cap, self.recyc_li,
+                             self.recyc_sd, self.Li_ref, self.smear]}
 
 
 @dataclass
@@ -97,7 +196,7 @@ class Instance:
         self.VS, self.VPU, self.VPS, self.QPOST = {}, {}, {}, {}
         for t in self.TY:
             q = self.QP[t]; pb, ms = self.BP[t]; cap = self.KWH[t]
-            self.VS[t] = price.p_rc * cap
+            self.VS[t] = float(price.VS(cap))
             self.VPU[t] = q*sum(pb[b]*price.Erev(ms[b],cap) for b in range(c.SB)) \
                           + (1-q)*self.VS[t] - c.Cp
             qq = q/(q+(1-q)*(1-self.P_DET)) if q > 0 else 0.0
@@ -125,7 +224,19 @@ class Instance:
             hi = max(self.VPS[(t,b)] for b in range(c.SB))
             lo = min(self.VPS[(t,b)] for b in range(c.SB))
             self.REG[t] = 'R1' if hi <= self.VS[t] else ('R2' if lo > self.VS[t] else 'R3')
-        from .data import RATIO_EMP as _RE, reg_from_ratio as _r2r
+        # 실측 손익배수 — 유형키가 `차종_용량` 이면 w5 표(types_w5.json), 아니면
+        # w4 의 차종 단위 표를 쓴다. 둘은 정의가 다르다:
+        #   w4  r = (E - V^S) / (C_p / q̄_P)     전체 평균 통과확률로 고정
+        #   w5  r = q_P (E - V^S) / C_p          유형별 통과확률 (정합성 메모 §4.2)
+        from .data import reg_from_ratio as _r2r
+        try:
+            from .data import ratio_emp_w5 as _rw5
+            _RE = dict(_rw5())
+        except Exception:
+            _RE = {}
+        if not any(t in _RE for t in self.TY):
+            from .data import RATIO_EMP as _RE4
+            _RE = dict(_RE4)
         self.RATIO_EMP = {t: _RE[t] for t in self.TY if t in _RE}
         self.REG_EMP = {t: _r2r(r) for t, r in self.RATIO_EMP.items()}
         self.REG_AGREE = {t: (self.REG[t] == self.REG_EMP[t]) for t in self.REG_EMP}

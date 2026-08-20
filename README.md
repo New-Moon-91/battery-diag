@@ -28,10 +28,18 @@ pytest -q tests/test_parity.py
 | 벤치마크 갭 4종 | 기존과 0.25%p 이내 |
 | 배치 디코더 | 항상 MDP 행동집합 안의 행동을 생성 |
 
-**주의 (w4).** `test_parity.py` 는 **구** 가격 파라미터(`data/params_v5.json`)를 쓴다.
-기준값이 그 파라미터로 낸 것이기 때문이다. 현행 `data/params.json`(w4 재캘리브레이션)의
-회귀는 `test_w4.py` 가 맡는다 — 확정 인스턴스는 SM3·쏘울·볼트·코나이고
-경제영역은 SM3=R1, 쏘울=R1, 볼트=R2, 코나=R2 다. `results/w4/DIGEST_w4.md` 참조.
+**주의 (가격 파라미터가 셋이다).** 셋 다 살아 있고 서로 다른 판을 재현한다.
+
+| 파일 | 구조 | 유형 키 | 회귀 | 담당 테스트 |
+|---|---|---|---|---|
+| `params_v5.json` | 2층 (예정가×낙찰배수) | 차종 | — | `test_parity.py` |
+| `params.json` | 2층, `M_s`=0 | 차종 | 2024~ 창 | `test_w4.py` |
+| **`params_w5.json`** | **직접회귀 + 리튬** | **차종×용량** | 전기간 | `test_w5.py` |
+
+`test_parity.py` 의 기준값은 구 파라미터로 낸 것이라 그대로 둔다. **현행은 w5** 다 —
+확정 인스턴스는 아이오닉_28.0 · 코나_64.0 · 볼트_60.0 · 포터2_58.8 이고, 실측 등급은
+R1 / R3 / R2 / R2 다. `results/w5/DIGEST_w5.md` · `results/w5/validation.md` 참조.
+캐시 해시는 세 구조를 구분한다(`PriceParams.key` / `PriceW5.key`).
 
 **주의.** 기준값은 2026-08-15 CPU 실행분이고 당시 $q_P$ 를 소수 3자리로 반올림해 썼다.
 지금 코드는 원자료 정밀값을 쓰므로 $g^\*$ 가 0.15% 정도 다르다 — 정상이다.
@@ -45,9 +53,12 @@ pytest -q tests/test_parity.py
 battery-diag/
 ├─ environment.yml
 ├─ data/                     pool.csv, pass_soh.csv, recycle_post.csv,
-│                            params.json (w4 재캘리브레이션) / params_v5.json (구)
+│                            types_w5.json (차종×용량 유형표 — 추적됨),
+│                            params_w5.json (현행) / params.json (w4) / params_v5.json (구),
+│                            입찰_재사용__0819.xlsx, 입찰_재활용__0819.xlsx (원자료, gitignore)
 ├─ src/battery_diag/
-│   ├─ data.py               원자료 → 차종 요약통계 FLEET, 결함비중(P_DET)
+│   ├─ data.py               원자료 → 유형(차종×용량) 요약통계 FLEET, 용량표기 정규화,
+│                            결함비중(P_DET), 실측 손익배수
 │   ├─ instance.py           MDP 정의 (상태·행동·전이·경제영역 R1/R2/R3)
 │   ├─ build.py              전이 → CSR 배열, 24코어 병렬 + 디스크 캐시
 │   ├─ exact.py              ExactSolver(GPU) / NumpySolver(참조) / policy_iteration
@@ -337,9 +348,21 @@ $C_f, C_p$ 는 **변동비만** — 장비 시간은 용량제약으로 이미 �
 **경제영역.** 차종별로 신호 $b$ 가 처분을 바꾸는지에 따라
 R1(전 신호 재활용, 정보가치 0) / R2(전 신호 정밀) / R3(신호가 처분을 뒤집음)로 갈린다.
 $C_p$=50만원에서 레이=R1, 코나=R2, SM3=R3 — **구 파라미터 기준이다.**
-w4 재캘리브레이션 후 확정 인스턴스에서는 SM3=R1, 쏘울=R1, 볼트=R2, 코나=R2 이고,
-이 분류가 실거래 손익배수로 매긴 분류와 네 차종 모두에서 일치한다
-(`Instance.REG_EMP` / `REG_AGREE`, `results/w4/validation.md` §3).
+
+**실측 손익배수 (w5).** 정밀검사는 통과확률 $q_P$ 로만 재사용 매출을 얻으므로
+
+$$r = q_P\,\bigl(E[\text{재사용}] - V^S\bigr) / C_p$$
+
+이고, 임계 0.8 / 1.5 로 R1 / R3 / R2 를 매긴다(`data.reg_from_ratio`). w4 까지는
+분모를 $C_p/\bar q_P$ 로 고정해 유형별 통과확률 차이를 반영하지 못했다.
+현행 인스턴스의 실측 등급은 아이오닉_28.0=R1, 코나_64.0=R3, 볼트_60.0=R2,
+포터2_58.8=R2 다. 전 11유형에서 실측 배수와 모형 배수의 켄달 타우는 +0.745,
+등급 일치는 9/11 이다 (`Instance.REG_EMP` / `REG_AGREE`,
+`results/w5/validation.md` §3).
+
+**주의 — `DUMP` 가 비었다.** w4 는 SM3·쏘울을 R1 로 가지쳐 행동수를 크게 줄였다.
+w5 인스턴스는 모형 기준 R1 이 하나도 없어 가지치기가 걸리지 않고, 그만큼
+행동공간이 4.8배로 커진다. 이것이 $W$=7 이 현실적으로 불가능한 직접 원인이다.
 
 **지배 가지치기.** R1 유형과 $V^{PS}\le V^S$ 인 선별품은 즉시매각으로 강제한다.
 안전하며(보관비 $h>0$, 미래가치 상한이 $V^S$) 행동수를 180만 → 7.8만으로 줄인다.

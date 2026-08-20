@@ -45,6 +45,14 @@ results/**
 
 !results/w4/*.json
 
+!results/w5/
+
+!results/w5/*.csv
+
+!results/w5/*.md
+
+!results/w5/*.json
+
 # 실행 로그 — 재생성 가능
 
 logs/
