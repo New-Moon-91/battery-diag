@@ -40,10 +40,27 @@ from .build import _init, _strip, _partition
 FLUSH_NNZ = 8_000_000          # 워커 버퍼 상한 (nnz) — 약 100MB 상당
 
 
+
+# 캐시 해시에서 **기본값일 때만** 제외하는 필드.
+# 해시가 cfg.__dict__ 전체를 쓰기 때문에 Config 에 필드를 하나 추가하면 기존 캐시가
+# 통째로 무효가 된다 (credit_loss 를 넣자 W=8 의 72GB 캐시까지 날아갔다).
+# 나중에 추가된 필드는 기본값이면 빼서 "그 필드가 없던 시절" 의 사전을 복원한다.
+# 기본값이 아니면 전이배열이 실제로 달라지므로 반드시 남긴다.
+# **새 필드를 Config 에 넣을 때마다 여기에도 추가할 것.**
+_LATE_FIELDS = {'W': None, 'credit_loss': False}
+
+
+def _cfg_key(cfg):
+    d = dict(cfg.__dict__)
+    for k, dflt in _LATE_FIELDS.items():
+        if k in d and d[k] == dflt:
+            d.pop(k)
+    return d
+
 def _key(inst, tag):
     h = hashlib.md5(json.dumps({
         'ty': {k: list(v) for k, v in inst.types.items()},
-        'cfg': inst.cfg.__dict__, 'tag': tag}, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        'cfg': _cfg_key(inst.cfg), 'tag': tag}, sort_keys=True, default=str).encode()).hexdigest()[:16]
     return f'stream_{h}'
 
 

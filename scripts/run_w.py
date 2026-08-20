@@ -17,7 +17,7 @@
 이 넷 모두 W 를 직접 참조하지 않는다. W 는 도착 시 강제매각으로만 작용하므로
 정책 정의를 바꿀 필요가 없다 — 기존 칸과의 갭 비교가 그래서 성립한다.
 """
-import sys, json, time, os
+import sys, json, time, os, argparse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
@@ -37,17 +37,27 @@ def main():
     from battery_diag.bigexact import StreamSolver
     from battery_diag import policies as pol
 
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--types', default=','.join(SEL), help='차종 목록 (쉼표)')
+    ap.add_argument('--tag', default='', help='출력 파일 접두 (예: T4 → T4_W6.json)')
+    ap.add_argument('--dry', action='store_true', help='규모 추정만 하고 빌드하지 않는다')
+    ap.add_argument('Ws', nargs='+', type=int)
+    args = ap.parse_args()
+    sel = args.types.split(',')
+    globals()['SEL'] = sel
+
     root = Path(__file__).resolve().parents[1]
     FLEET, FS = load_cached(str(root/'data'))
-    tot = sum(FLEET[t][0] for t in SEL)
+    tot = sum(FLEET[t][0] for t in sel)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0]/tot)
-             for t in SEL}
+             for t in sel}
     price = PriceParams.from_json(root/'data'/'params.json')
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     OUT.mkdir(parents=True, exist_ok=True)
+    pre = (args.tag + '_') if args.tag else ''
 
-    for W in [int(x) for x in sys.argv[1:]]:
-        f = OUT/f'W{W}.json'
+    for W in args.Ws:
+        f = OUT/f'{pre}W{W}.json'
         if f.exists():
             print(f'[skip] W={W}', flush=True); continue
         t_all = time.time()
@@ -68,17 +78,19 @@ def main():
         nnz_est = nnz/len(smp)*nS
         gb = nnz_est*12/1e9
         stream = gb > float(os.environ.get('BATDIAG_STREAM_GB', 8))
-        print(f'W={W}: nS={nS:,}  nA≈{nA_est:,.0f}  nnz≈{nnz_est:,.0f}  CSR≈{gb:.1f}GB  '
-              f'→ {"스트리밍" if stream else "in-RAM"}', flush=True)
+        print(f'|T|={len(sel)} W={W}: nS={nS:,}  nA≈{nA_est:,.0f}  nnz≈{nnz_est:,.0f}  '
+              f'CSR≈{gb:.1f}GB  → {"스트리밍" if stream else "in-RAM"}', flush=True)
+        if args.dry:
+            continue
 
         t0 = time.time()
         if stream:
-            A = build_stream(I, cache_dir=CACHE, tag=','.join(SEL), log=print)
+            A = build_stream(I, cache_dir=CACHE, tag=','.join(sel), log=print)
             t_build = time.time()-t0
             S = StreamSolver(A, device=dev)
             t0 = time.time(); gstar, h, it = S.solve(acts0=pol.index_myopic(I), log=print)
         else:
-            A = build(I, cache_dir=CACHE, tag=','.join(SEL))
+            A = build(I, cache_dir=CACHE, tag=','.join(sel))
             t_build = time.time()-t0
             S = ExactSolver(A, device=dev)
             t0 = time.time(); gstar, h, it = S.solve()
@@ -116,7 +128,7 @@ def main():
                    gstar=float(gstar), bench=bench, gaps=gaps, B_fast_thr=int(thr_best),
                    B_fast_all={str(k): v for k, v in bf.items()},
                    opt=stats_opt, bfast=stats_bfast,
-                   summary=I.summary(), wall_sec=time.time()-t_all)
+                   types=sel, summary=I.summary(), wall_sec=time.time()-t_all)
         f.write_text(json.dumps(res, ensure_ascii=False, indent=1, default=float))
         print(f'  → {f}  (총 {time.time()-t_all:.0f}s)', flush=True)
         del S, A

@@ -52,6 +52,8 @@ class Config:
     NMAX: int = 2             # 유형별 미검사 버퍼 상한 (W=None 일 때만 유효)
     SMAX: int = 2             # 선별완료 버퍼 상한 (W=None 일 때만 유효)
     W: int | None = None      # 창고 총 수용 대수. 지정하면 W-정식화
+    credit_loss: bool = False # 기존 정식화에서 min(n+1,NMAX) 로 잘린 도착에
+                              # 재활용 매각수익 p_rc*kWh 를 계상 (소실보정 MDP)
     SB: int = 3               # 신호 구간 수
     prune: bool = True
     F_E: float = 278/354      # 신속검사 확정 판별 결함 비중
@@ -109,6 +111,7 @@ class Instance:
                                for x in itertools.combinations_with_replacement(self.SIT, k)]
             self.NV = list(itertools.product(range(c.NMAX+1), repeat=len(self.TY)))
             self.ST = [(n, sc) for n in self.NV for sc in self.SCR]
+            self._arrc = {}
         else:
             W = self.W; nT = len(self.TY)
             scr_k = [[()] if k == 0 else
@@ -172,6 +175,37 @@ class Instance:
             agg[key] = agg.get(key, 0.) + pr
         out = [(p, a, rev, ns) for (a, rev, ns), p in agg.items()]
         self._arrw[slack] = out
+        return out
+
+    def arr_credit(self, n):
+        """소실보정판 도착 — (확률, 다음 미검사벡터, 조건부 기대 매각수익).
+
+        기존 arr() 은 n_t 가 NMAX 면 도착분을 조용히 버린다(무료 소실). 여기서는
+        같은 전이를 그대로 두되 버려진 대수마다 p_rc*kWh 를 보상에 계상한다.
+        상태공간·전이확률은 arr() 과 완전히 같고 보상만 다르다 — 그래야 "보정 MDP"
+        가 원 MDP 와 같은 커널 위에서 정의된다.
+        """
+        key = tuple(n)
+        if key in self._arrc: return self._arrc[key]
+        c = self.cfg
+        o = {key: (1.0, 0.0)}
+        for _ in range(c.NARR):
+            nx = {}
+            def add(k2, p, dv, cv):
+                a0, b0 = nx.get(k2, (0., 0.))
+                nx[k2] = (a0+p, b0+p*(cv+dv))
+            for nn, (p0, cv) in o.items():
+                add(nn, p0*(1-c.lam), 0., cv)
+                for k, t in enumerate(self.TY):
+                    p = p0*c.lam*self.MIX[t]
+                    if nn[k] >= c.NMAX:
+                        add(nn, p, self.VS[t], cv)      # 잘림 → 매각수익 계상
+                    else:
+                        n2 = list(nn); n2[k] += 1
+                        add(tuple(n2), p, 0., cv)
+            o = {k: (v[0], v[1]/max(v[0], 1e-300)) for k, v in nx.items()}
+        out = [(p, nn, rev) for nn, (p, rev) in o.items()]
+        self._arrc[key] = out
         return out
 
     # ---------- 도착 (기존 NMAX 정식화) ----------
@@ -256,8 +290,12 @@ class Instance:
             occ = sum(rem) + len(sc)
             hc = c.h*occ                       # 보관비는 도착 전 점유에 부과
             if self.W is None:
-                for nn, pa in self.arr(tuple(rem)):
-                    out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc))
+                if c.credit_loss:
+                    for pa, nn, rev in self.arr_credit(tuple(rem)):
+                        out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc+rev))
+                else:
+                    for nn, pa in self.arr(tuple(rem)):
+                        out.append((p0*pa, self.SI[(nn, sc)], r+rr-hc))
             else:
                 for pa, aa, rev, _ns in self._arr_slack(self.W - occ):
                     nn = tuple(rem[k]+aa[k] for k in range(nT))

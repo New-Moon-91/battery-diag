@@ -49,6 +49,33 @@ def b_fast(I, thr):
     return np.array(out, dtype=np.int64)
 
 
+def b_fast_hold(I, thr):
+    """B_fast 에서 **즉시처분 강제만 해제**한 중간 벤치마크 (w3 [2]).
+
+    전량 신속검사는 그대로 강제한다. 다른 점은 선별완료품 처리뿐이다.
+      B_fast      : 정밀 CAP건 외에는 **전부 즉시매각**
+      B_fast_hold : 정밀 CAP건 외에는 **보유**(HOLD). 가지치기로 강제매각이 걸린
+                    선별품(SDUMP, V^PS <= V^S)만 판다.
+    따라서
+      gap(B_fast) = gap(B_fast_hold) + [gap(B_fast) - gap(B_fast_hold)]
+                  = [전량검사 강제의 비용] + [즉시처분 강제의 비용]
+    로 관행의 두 요소가 분해된다.
+    """
+    z = tuple([0]*len(I.TY)); out = []
+    for st in I.ST:
+        n, scr = st
+        sv = tuple(n[k] if I.TY[k] in I.DUMP else 0 for k in range(len(I.TY)))
+        fv = tuple(0 if I.TY[k] in I.DUMP else n[k] for k in range(len(I.TY)))
+        cand = sorted([j for j in range(len(scr))
+                       if scr[j][1] >= thr and I.VPS[scr[j]] > I.VS[scr[j][0]]],
+                      key=lambda j: -I.VPS[scr[j]])[:I.CAP]
+        ps = frozenset(cand)
+        ss = frozenset(j for j in range(len(scr))
+                       if j not in ps and scr[j] in I.SDUMP)   # 강제분만 매각
+        out.append(_idx(I, st, (sv, fv, z, ss, ps)))
+    return np.array(out, dtype=np.int64)
+
+
 def evsi(I, t):
     q = I.QP[t]; pb, ms = I.BP[t]; pdet = (1-q)*I.P_DET
     v0 = max(I.VS[t], I.VPU[t])
