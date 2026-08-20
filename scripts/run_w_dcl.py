@@ -11,9 +11,12 @@ import sys, json, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
-SEL = ['레이', '코나', 'SM3']
-CACHE = '/home/user/batdiag-cache'
-OUT = Path(__file__).resolve().parents[1]/'results'/'w_model'
+# w4 [2] 확정 인스턴스. 근거는 battery_diag.data.SEL_W4 주석 참조.
+from battery_diag.data import SEL_W4 as SEL
+import os
+CACHE = os.environ.get('BATDIAG_CACHE', '/home/user/batdiag-cache')
+OUT = Path(os.environ.get('BATDIAG_OUT',
+           Path(__file__).resolve().parents[1]/'results'/'w4'))
 
 
 def main():

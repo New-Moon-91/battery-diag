@@ -36,3 +36,15 @@ results/**
 !results/w_model/*.md
 
 !results/w_model/*.json
+
+!results/w4/
+
+!results/w4/*.csv
+
+!results/w4/*.md
+
+!results/w4/*.json
+
+# 실행 로그 — 재생성 가능
+
+logs/

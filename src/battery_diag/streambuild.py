@@ -57,10 +57,26 @@ def _cfg_key(cfg):
             d.pop(k)
     return d
 
+# 가격 파라미터도 해시에 넣어야 한다 — rsa(기대 즉시보상)가 캐시에 들어가므로
+# params.json 을 바꾸고 캐시를 그대로 쓰면 **옛 보상으로 푼 답이 조용히 나온다.**
+# (w4 재캘리브레이션에서 실제로 걸릴 뻔했다.)
+# 다만 _LATE_FIELDS 와 같은 요령으로, 구 파라미터(v5)와 정확히 같을 때는 키에서 빼서
+# "가격이 해시에 없던 시절" 의 사전을 복원한다. 그래야 379GB 짜리 기존 캐시가
+# data/params_v5.json 재현용으로 그대로 살아 있다.
+_PRICE_V5 = (8.256862475075309, 1.5815474565093999, 2.8545182109885903,
+             1.5666485932513265, -0.9472082008955554, 0.545511013478258, 8708.0)
+
+
+def _price_key(pp):
+    v = (pp.g_c0, pp.g_cap, pp.g_s, pp.M_c0, pp.M_s, pp.M_sd, pp.p_rc)
+    return {} if v == _PRICE_V5 else {'price': list(v)}
+
+
 def _key(inst, tag):
     h = hashlib.md5(json.dumps({
         'ty': {k: list(v) for k, v in inst.types.items()},
-        'cfg': _cfg_key(inst.cfg), 'tag': tag}, sort_keys=True, default=str).encode()).hexdigest()[:16]
+        'cfg': _cfg_key(inst.cfg), 'tag': tag, **_price_key(inst.pp)},
+        sort_keys=True, default=str).encode()).hexdigest()[:16]
     return f'stream_{h}'
 
 

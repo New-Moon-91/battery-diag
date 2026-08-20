@@ -12,6 +12,9 @@ import sys, json, csv, time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
+# w1~w3 스크립트다. 인스턴스가 레이·코나·SM3 로 고정돼 있고 커밋된 결과도
+# 그 조합·구 가격으로 냈으므로, 가격도 params_v5.json 으로 고정한다.
+# w4 재캘리브레이션된 params.json 을 여기에 물리면 구 결과와 섞인다.
 SEL = ['레이', '코나', 'SM3']
 CACHE = '/home/user/batdiag-cache'
 OUT = Path(__file__).resolve().parents[1]/'results'/'w_model'
@@ -32,7 +35,7 @@ def main():
     tot = sum(FLEET[t][0] for t in SEL)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0]/tot)
              for t in SEL}
-    price = PriceParams.from_json(root/'data'/'params.json')
+    price = PriceParams.from_json(root/'data'/'params_v5.json')
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     OUT.mkdir(parents=True, exist_ok=True)
 

@@ -23,9 +23,15 @@ pytest -q tests/test_parity.py
 |---|---|
 | 상태 수 / 행동 수 | 1,485 / 78,000 |
 | 경제영역 분류 | 레이=R1, 코나=R2, SM3=R3 |
+| 가격 파라미터 | `data/params_v5.json` (구 파라미터 고정) |
 | $g^\*$ (NARR=1~4) | 기존 CPU 결과와 0.2% 이내 |
 | 벤치마크 갭 4종 | 기존과 0.25%p 이내 |
 | 배치 디코더 | 항상 MDP 행동집합 안의 행동을 생성 |
+
+**주의 (w4).** `test_parity.py` 는 **구** 가격 파라미터(`data/params_v5.json`)를 쓴다.
+기준값이 그 파라미터로 낸 것이기 때문이다. 현행 `data/params.json`(w4 재캘리브레이션)의
+회귀는 `test_w4.py` 가 맡는다 — 확정 인스턴스는 SM3·쏘울·볼트·코나이고
+경제영역은 SM3=R1, 쏘울=R1, 볼트=R2, 코나=R2 다. `results/w4/DIGEST_w4.md` 참조.
 
 **주의.** 기준값은 2026-08-15 CPU 실행분이고 당시 $q_P$ 를 소수 3자리로 반올림해 썼다.
 지금 코드는 원자료 정밀값을 쓰므로 $g^\*$ 가 0.15% 정도 다르다 — 정상이다.
@@ -38,7 +44,8 @@ pytest -q tests/test_parity.py
 ```
 battery-diag/
 ├─ environment.yml
-├─ data/                     pool.csv, pass_soh.csv, recycle_post.csv, params.json
+├─ data/                     pool.csv, pass_soh.csv, recycle_post.csv,
+│                            params.json (w4 재캘리브레이션) / params_v5.json (구)
 ├─ src/battery_diag/
 │   ├─ data.py               원자료 → 차종 요약통계 FLEET, 결함비중(P_DET)
 │   ├─ instance.py           MDP 정의 (상태·행동·전이·경제영역 R1/R2/R3)
@@ -329,7 +336,10 @@ $C_f, C_p$ 는 **변동비만** — 장비 시간은 용량제약으로 이미 �
 
 **경제영역.** 차종별로 신호 $b$ 가 처분을 바꾸는지에 따라
 R1(전 신호 재활용, 정보가치 0) / R2(전 신호 정밀) / R3(신호가 처분을 뒤집음)로 갈린다.
-$C_p$=50만원에서 레이=R1, 코나=R2, SM3=R3.
+$C_p$=50만원에서 레이=R1, 코나=R2, SM3=R3 — **구 파라미터 기준이다.**
+w4 재캘리브레이션 후 확정 인스턴스에서는 SM3=R1, 쏘울=R1, 볼트=R2, 코나=R2 이고,
+이 분류가 실거래 손익배수로 매긴 분류와 네 차종 모두에서 일치한다
+(`Instance.REG_EMP` / `REG_AGREE`, `results/w4/validation.md` §3).
 
 **지배 가지치기.** R1 유형과 $V^{PS}\le V^S$ 인 선별품은 즉시매각으로 강제한다.
 안전하며(보관비 $h>0$, 미래가치 상한이 $V^S$) 행동수를 180만 → 7.8만으로 줄인다.

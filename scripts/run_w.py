@@ -13,6 +13,9 @@
          신속검사는 미검사→선별완료 이동이라 총 점유가 불변이므로 W 가 이 정책을
          제약하지 않는다 — 그래서 "자리가 허용하는 한" 이라는 단서가 필요 없고,
          정의가 기존과 정확히 같다. thr 은 0..SB-1 중 최선을 고른다.
+  B_fast_hold  전량 신속검사 강제는 그대로, **즉시처분 강제만 해제**한 중간 벤치마크
+         (w3 [2]). gap(B_fast) = gap(B_fast_hold) + [나머지] 로 관행의 손실이
+         「전량검사 강제」와 「즉시처분 강제」로 분해된다.
   INDEX  근시안 EVSI 지표. 자원이 분리돼 신속·정밀 결정이 독립이라는 근사.
 이 넷 모두 W 를 직접 참조하지 않는다. W 는 도착 시 강제매각으로만 작용하므로
 정책 정의를 바꿀 필요가 없다 — 기존 칸과의 갭 비교가 그래서 성립한다.
@@ -20,9 +23,9 @@
 import sys, json, time, os, argparse
 from pathlib import Path
 
+# w4 [2] 확정 인스턴스. 목록의 근거는 battery_diag.data.SEL_W4 주석 참조.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
-
-SEL = ['레이', '코나', 'SM3']
+from battery_diag.data import SEL_W4 as SEL
 CACHE = os.environ.get('BATDIAG_CACHE', '/home/user/batdiag-cache')
 OUT = Path(__file__).resolve().parents[1]/'results'/'w_model'
 
@@ -41,6 +44,7 @@ def main():
     ap.add_argument('--types', default=','.join(SEL), help='차종 목록 (쉼표)')
     ap.add_argument('--tag', default='', help='출력 파일 접두 (예: T4 → T4_W6.json)')
     ap.add_argument('--dry', action='store_true', help='규모 추정만 하고 빌드하지 않는다')
+    ap.add_argument('--outdir', default=str(OUT), help='출력 디렉터리')
     ap.add_argument('Ws', nargs='+', type=int)
     args = ap.parse_args()
     sel = args.types.split(',')
@@ -53,11 +57,11 @@ def main():
              for t in sel}
     price = PriceParams.from_json(root/'data'/'params.json')
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
-    OUT.mkdir(parents=True, exist_ok=True)
+    out = Path(args.outdir); out.mkdir(parents=True, exist_ok=True)
     pre = (args.tag + '_') if args.tag else ''
 
     for W in args.Ws:
-        f = OUT/f'{pre}W{W}.json'
+        f = out/f'{pre}W{W}.json'
         if f.exists():
             print(f'[skip] W={W}', flush=True); continue
         t_all = time.time()
@@ -106,17 +110,30 @@ def main():
         for name, a in (('B1', pol.b1_sell_all(I)), ('B2', pol.b2_no_screening(I)),
                         ('INDEX', pol.index_myopic(I))):
             bench[name] = float(S.evaluate(a)[0])
+        # thr 정의역은 0..SB 가 전부다 (thr=SB = 아무도 자격 없음 = 정밀검사 미사용).
+        # w3 [2](a) 에서 격자 완전성을 확인했으므로 여기서도 전 구간을 평가한다.
         bf = {}
         bf_acts = {}
-        for thr in range(cfg.SB):
+        for thr in range(cfg.SB + 1):
             a = pol.b_fast(I, thr); bf_acts[thr] = a
             bf[thr] = float(S.evaluate(a)[0])
         thr_best = max(bf, key=bf.get)
         bench['B_fast'] = bf[thr_best]
         stats_bfast = policy_stats(I, S, bf_acts[thr_best])
+        bfh = {thr: float(S.evaluate(pol.b_fast_hold(I, thr))[0])
+               for thr in range(cfg.SB + 1)}
+        thr_hold = max(bfh, key=bfh.get)
+        bench['B_fast_hold'] = bfh[thr_hold]
         gaps = {k: 100*(gstar-v)/gstar for k, v in bench.items()}
-        for k in ('B1', 'B2', 'INDEX', 'B_fast'):
-            print(f'  {k:7s} {bench[k]:>13,.0f}  갭 {gaps[k]:6.3f}%', flush=True)
+        decomp = dict(gap_B_fast=gaps['B_fast'],
+                      gap_B_fast_hold=gaps['B_fast_hold'],
+                      cost_full_inspection=gaps['B_fast_hold'],
+                      cost_forced_disposal=gaps['B_fast']-gaps['B_fast_hold'])
+        for k in ('B1', 'B2', 'INDEX', 'B_fast', 'B_fast_hold'):
+            print(f'  {k:12s} {bench[k]:>13,.0f}  갭 {gaps[k]:6.3f}%', flush=True)
+        print(f"  분해: B_fast 갭 {decomp['gap_B_fast']:.3f}% = 전량검사강제 "
+              f"{decomp['cost_full_inspection']:.3f}%p + 즉시처분강제 "
+              f"{decomp['cost_forced_disposal']:.3f}%p", flush=True)
         print(f'  강제매각(최적) {stats_opt["forced_units"]:.4f}대/기간 '
               f'{stats_opt["forced_value"]:,.0f}원  발동확률 {100*stats_opt["forced_prob"]:.2f}%',
               flush=True)
@@ -127,6 +144,8 @@ def main():
                    stream=stream, build_sec=t_build, solve_sec=t_solve, pi_iters=it,
                    gstar=float(gstar), bench=bench, gaps=gaps, B_fast_thr=int(thr_best),
                    B_fast_all={str(k): v for k, v in bf.items()},
+                   B_fast_hold_all={str(k): v for k, v in bfh.items()},
+                   B_fast_hold_thr=int(thr_hold), decomp=decomp,
                    opt=stats_opt, bfast=stats_bfast,
                    types=sel, summary=I.summary(), wall_sec=time.time()-t_all)
         f.write_text(json.dumps(res, ensure_ascii=False, indent=1, default=float))

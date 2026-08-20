@@ -22,7 +22,17 @@ _Phi = lambda z: 0.5 * (1 + erf(z / sqrt(2)))
 
 @dataclass
 class PriceParams:
-    """2층 가격구조: P = M(s) * g(s, cap).  g=예정가격 헤도닉, M=낙찰배수(로그정규)"""
+    """2층 가격구조: P = M(s) * g(s, cap).  g=예정가격 헤도닉, M=낙찰배수(로그정규)
+
+    w4 재캘리브레이션(2026-08) 이후 **M_s = 0** 이다. 낙찰배수가 SOH 에 의존하지
+    않는다는 뜻이다. 근거: 2024-01 이후 실거래에서 낙찰배수를 SOH 로 회귀하면
+    R^2 = 0.0008 이고 부호도 기존 추정(-0.9472)과 반대다. 낙찰배수를 실제로 움직이는
+    것은 입찰참가자 수(ln 참가자수 계수 +0.284, R^2=0.074 — 참가자 1명당 약 +9%)인데
+    이는 모형 외생이므로 M_s=0 으로 두고 로그정규 잡음의 평균만 맞춘다.
+    따라서 Erev 의 SOH 의존성은 전부 헤도닉 g 의 g_s 항에서 나온다.
+    exp(M_s*s) 항은 항등적으로 1 이 되지만 식은 그대로 둔다 — 구 파라미터
+    (data/params_v5.json) 로 기존 결과를 재현할 때 같은 코드 경로를 쓰기 위해서다.
+    """
     g_c0: float; g_cap: float; g_s: float
     M_c0: float; M_s: float; M_sd: float
     p_rc: float
@@ -95,11 +105,30 @@ class Instance:
             for b in range(c.SB):
                 self.VPS[(t,b)] = qq*price.Erev(ms[b],cap) + (1-qq)*self.VS[t] - c.Cp
         # 경제영역 R1/R2/R3
+        #
+        # 두 갈래로 매긴다.
+        #  · REG      — 모형 내부 기준. hi = max_b V^PS, lo = min_b V^PS 를 V^S 와 비교.
+        #               **가지치기(DUMP)는 반드시 이쪽을 써야 한다.** R1 은 "모든 신호에서
+        #               정밀검사가 지배당함" 이라는 증명 가능한 명제이고, 그래야 즉시매각
+        #               강제가 최적성을 해치지 않는다. 실측 배수로 바꿔 끼우면 근거 없이
+        #               최적행동을 잘라내게 된다.
+        #  · REG_EMP  — w4 [2] 의 실측 기준. 모형을 전혀 쓰지 않고 2024-01 이후 실거래
+        #               낙찰가만으로 계산한 손익배수 (E[재사용]-V^S)/(C_p/q_P) 를
+        #               임계 0.8/1.5 로 자른다 (battery_diag.data.reg_from_ratio).
+        #               논문·보고서에 싣는 차종 분류는 이쪽이 1차 기준이다.
+        #
+        # 둘이 일치하는지가 그 자체로 검증이다(REG_AGREE). w4 인스턴스
+        # (SM3·쏘울·볼트·코나)에서는 넷 다 일치한다 — 구 파라미터에서는 SM3·쏘울이
+        # 어긋났다. results/w4/validation.md §3 참조.
         self.REG = {}
         for t in self.TY:
             hi = max(self.VPS[(t,b)] for b in range(c.SB))
             lo = min(self.VPS[(t,b)] for b in range(c.SB))
             self.REG[t] = 'R1' if hi <= self.VS[t] else ('R2' if lo > self.VS[t] else 'R3')
+        from .data import RATIO_EMP as _RE, reg_from_ratio as _r2r
+        self.RATIO_EMP = {t: _RE[t] for t in self.TY if t in _RE}
+        self.REG_EMP = {t: _r2r(r) for t, r in self.RATIO_EMP.items()}
+        self.REG_AGREE = {t: (self.REG[t] == self.REG_EMP[t]) for t in self.REG_EMP}
         self.DUMP  = {t for t in self.TY if c.prune and self.REG[t]=='R1'}
         self.SIT   = [(t,b) for t in self.TY for b in range(c.SB)]
         self.SDUMP = {x for x in self.SIT if c.prune and self.VPS[x] <= self.VS[x[0]]}
@@ -306,6 +335,8 @@ class Instance:
         cap_tot = self.W if self.W is not None else (self.cfg.NMAX*len(self.TY)+self.cfg.SMAX)
         d = dict(nS=len(self.ST), nA=self.n_actions(), CAP=self.CAP, Hslot=self.Hslot,
                  lam_eff=self.cfg.lam*self.cfg.NARR,
-                 selectivity=self.CAP/cap_tot, REG=dict(self.REG))
+                 selectivity=self.CAP/cap_tot, REG=dict(self.REG),
+                 REG_EMP=dict(self.REG_EMP), RATIO_EMP=dict(self.RATIO_EMP),
+                 REG_AGREE=dict(self.REG_AGREE))
         if self.W is not None: d['W'] = self.W
         return d

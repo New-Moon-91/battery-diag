@@ -1,7 +1,12 @@
 # -*- coding: utf-8 -*-
 """이식 검증 — GPU 재작성본이 기존 CPU 결과를 재현하는가.
 서버에서 가장 먼저 실행할 것:  pytest -q tests/test_parity.py
-기준값은 2026-08-15 CPU 실행분(레이·코나·SM3, Mcyc=1, NMAX=SMAX=2, Cp=50만, Cf=2만)."""
+기준값은 2026-08-15 CPU 실행분(레이·코나·SM3, Mcyc=1, NMAX=SMAX=2, Cp=50만, Cf=2만).
+
+**가격 파라미터는 params_v5.json 을 쓴다.** 이 파일의 기준값은 구 파라미터로 낸
+CPU 실행분이므로, w4 재캘리브레이션된 params.json 을 쓰면 당연히 어긋난다.
+여기서 검증하는 것은 "가격이 얼마인가" 가 아니라 "같은 가격에서 GPU 경로가 CPU 경로를
+재현하는가" 이므로 파라미터를 고정하는 것이 옳다. 새 파라미터의 회귀는 test_w4.py 가 맡는다."""
 import json, sys
 from pathlib import Path
 import numpy as np, pytest, torch
@@ -29,7 +34,7 @@ def _inst(NARR):
     sel = ['레이','코나','SM3']; tot = sum(FLEET[t][0] for t in sel)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0]/tot) for t in sel}
     cfg = Config(NARR=NARR, F_E=FS['F_E'], F_U=FS['F_U'])
-    return Instance(types, PriceParams.from_json(DATA/'params.json'), cfg)
+    return Instance(types, PriceParams.from_json(DATA/'params_v5.json'), cfg)
 
 
 def test_action_count():

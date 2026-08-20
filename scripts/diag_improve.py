@@ -16,6 +16,9 @@ from battery_diag.bigexact import StreamSolver
 
 import torch
 DEV = 'cuda' if torch.cuda.is_available() else 'cpu'
+# w1~w3 스크립트다. 인스턴스가 레이·코나·SM3 로 고정돼 있고 커밋된 결과도
+# 그 조합·구 가격으로 냈으므로, 가격도 params_v5.json 으로 고정한다.
+# w4 재캘리브레이션된 params.json 을 여기에 물리면 구 결과와 섞인다.
 SEL = ['레이', '코나', 'SM3']
 
 
@@ -23,7 +26,7 @@ def main():
     FLEET, FS = load_cached('data')
     tot = sum(FLEET[t][0] for t in SEL)
     types = {t: (FLEET[t][1], FLEET[t][2], FLEET[t][3], FLEET[t][4], FLEET[t][0]/tot) for t in SEL}
-    price = PriceParams.from_json(Path('data') / 'params.json')
+    price = PriceParams.from_json(Path('data') / 'params_v5.json')
     cfg = Config(Mcyc=1, Cp=500000, Cf=20000, phi=1.0, NARR=4,
                  NMAX=2, SMAX=2, F_E=FS['F_E'], F_U=FS['F_U'])
     I = Instance(types, price, cfg)
