@@ -5,6 +5,13 @@ import numpy as np, torch
 
 SCALE = 1e6
 
+# W 무관 정규화 (w6 [4]).
+# 기본값 None 이면 기존 그대로 — ctx 를 Um·Sm(=W) 으로 나눈다. 즉 같은 물리적
+# 점유가 W 마다 다른 입력값이 되고, 학습 W 밖으로 나가면 망이 못 본 분포에 들어간다.
+# 상수를 넣으면 분모를 그 값으로 고정해 **절대 점유 대수**를 그대로 보게 한다.
+# `battery_diag.encode.WREF = 8.0` 처럼 실행 시점에 꽂는다 (net.WREF 도 같이 맞출 것).
+WREF = None
+
 
 def state_tensors(I, device='cuda', dtype=torch.float32):
     """전 상태를 한 번에 패딩 텐서로.
@@ -52,7 +59,10 @@ def state_tensors(I, device='cuda', dtype=torch.float32):
             if x in I.SDUMP: as_[si,q] = [True, False, False]
             else:            as_[si,q] = [True, I.VPS[x] > I.VS[x[0]], True]
         tot = sum(n) + len(scr)
-        ctx[si] = [sum(n)/max(Um,1), len(scr)/max(Sm,1), I.CAP/max(Um+Sm,1), tot/max(Um+Sm,1)]
+        ru = float(WREF) if WREF else max(Um, 1)
+        rs = float(WREF) if WREF else max(Sm, 1)
+        rt = float(WREF) if WREF else max(Um+Sm, 1)
+        ctx[si] = [sum(n)/ru, len(scr)/rs, I.CAP/rt, tot/rt]
     T = lambda a, d=dtype: torch.as_tensor(a, device=device, dtype=d)
     out = dict(U=T(U), mu=T(mu), S=T(S), ms=T(ms), ctx=T(ctx),
                allow_u=torch.as_tensor(au, device=device),
@@ -61,6 +71,10 @@ def state_tensors(I, device='cuda', dtype=torch.float32):
     if I.W is not None:
         out['wcap'] = T(np.full(nS, float(I.W), np.float32))
     return out
+
+
+def wref_active():
+    return None if not WREF else float(WREF)
 
 
 def assign_to_action(I, st, slot_t_row, slot_j_row, au_row, as_row):

@@ -18,6 +18,15 @@ def mlp(i, h, o, act=nn.Tanh):
     return nn.Sequential(nn.Linear(i, h), act(), nn.Linear(h, h), act(), nn.Linear(h, o))
 
 
+# W 무관 정규화 (w6 [4]). encode.WREF 와 같은 값으로 함께 설정한다.
+# None 이면 기존 그대로 — 슬롯 수(Um·Sm=W)와 wcap 으로 나눈다.
+WREF = None
+
+
+def _ref(default):
+    return float(WREF) if WREF else float(default)
+
+
 # carry 차원 — 미검사축 7, 선별축 6 (아래 carry_from_labels 의 열 순서와 같다)
 CARRY_U, CARRY_S = 7, 6
 
@@ -61,7 +70,8 @@ class PolicyNet(nn.Module):
         eu = (self.phiU(U) * mu.unsqueeze(-1)).sum(1) / mu.sum(1, keepdim=True).clamp(min=1)
         es = (self.phiS(S) * ms.unsqueeze(-1)).sum(1) / ms.sum(1, keepdim=True).clamp(min=1)
         hu = self._hist(U, mu, 1); hs = self._hist(S, ms, 1)
-        cnt = torch.stack([mu.sum(1)/max(U.shape[1],1), ms.sum(1)/max(S.shape[1],1)], -1)
+        cnt = torch.stack([mu.sum(1)/_ref(max(U.shape[1],1)),
+                           ms.sum(1)/_ref(max(S.shape[1],1))], -1)
         return self.enc(torch.cat([eu, es, ctx, hu, hs, cnt], -1))
 
     def value(self, z):
@@ -135,10 +145,14 @@ class PolicyNet(nn.Module):
             cap_ref = float(max(Sm, 1))
             freeU = Sm - nscr - prevFastU
             freeS = Sm - (nscr - prevSellS - prevPrecS) - totFastU
-        cU = torch.cat([prevU4/max(Um,1), (budU/max(cap,1)).unsqueeze(-1),
-                        (freeU/cap_ref).unsqueeze(-1), (remU/max(Um,1)).unsqueeze(-1)], -1)
-        cS = torch.cat([prevS3/max(Sm,1), (budS/max(cap,1)).unsqueeze(-1),
-                        (freeS/cap_ref).unsqueeze(-1), (remS/max(Sm,1)).unsqueeze(-1)], -1)
+        if WREF:                       # W 무관 정규화 — 분모를 고정 상수로
+            cap_ref = _ref(1.0)
+        cU = torch.cat([prevU4/_ref(max(Um,1)), (budU/max(cap,1)).unsqueeze(-1),
+                        (freeU/cap_ref).unsqueeze(-1),
+                        (remU/_ref(max(Um,1))).unsqueeze(-1)], -1)
+        cS = torch.cat([prevS3/_ref(max(Sm,1)), (budS/max(cap,1)).unsqueeze(-1),
+                        (freeS/cap_ref).unsqueeze(-1),
+                        (remS/_ref(max(Sm,1))).unsqueeze(-1)], -1)
         return cU, cS, mU, mS
 
     def _logits(self, head, z, feat, bud):
@@ -189,6 +203,8 @@ class PolicyNet(nn.Module):
         wmode = 'wcap' in batch
         Wt = batch['wcap'] if wmode else None
         cap_ref = Wt if wmode else float(max(Sm, 1))
+        if WREF:                                # W 무관 정규화 (carry_from_labels 와 동일)
+            cap_ref = _ref(1.0)
         cntU = torch.zeros(B, 4, device=U.device, dtype=dt)
         cntS = torch.zeros(B, 3, device=U.device, dtype=dt)
         prevPrecU = torch.zeros(B, device=U.device, dtype=dt)
@@ -198,9 +214,9 @@ class PolicyNet(nn.Module):
         for i in range(Um):
             budU = cap - prevPrecU
             freeU = (Wt - nscr - prevFastU - prevHoldU) if wmode else (Sm - nscr - prevFastU)
-            c = torch.cat([cntU/max(Um,1), (budU/max(cap,1)).unsqueeze(-1),
+            c = torch.cat([cntU/_ref(max(Um,1)), (budU/max(cap,1)).unsqueeze(-1),
                            (freeU/cap_ref).unsqueeze(-1),
-                           (remU[:, i]/max(Um,1)).unsqueeze(-1)], -1)
+                           (remU[:, i]/_ref(max(Um,1))).unsqueeze(-1)], -1)
             cUs.append(c)
             lg = self.headU(torch.cat([z, U[:, i], c], -1))
             m = allow_u[:, i].clone(); m[:, 2] &= (budU >= 1)
@@ -219,9 +235,9 @@ class PolicyNet(nn.Module):
             budS = cap - totPrecU - prevPrecS
             freeS = ((Wt - (nscr - prevSellS - prevPrecS) - totFastU - totHoldU) if wmode
                      else (Sm - (nscr - prevSellS - prevPrecS) - totFastU))
-            c = torch.cat([cntS/max(Sm,1), (budS/max(cap,1)).unsqueeze(-1),
+            c = torch.cat([cntS/_ref(max(Sm,1)), (budS/max(cap,1)).unsqueeze(-1),
                            (freeS/cap_ref).unsqueeze(-1),
-                           (remS[:, j]/max(Sm,1)).unsqueeze(-1)], -1)
+                           (remS[:, j]/_ref(max(Sm,1))).unsqueeze(-1)], -1)
             cSs.append(c)
             lg = self.headS(torch.cat([z, S[:, j], c], -1))
             m = allow_s[:, j].clone(); m[:, 1] &= (budS >= 1)

@@ -1,0 +1,385 @@
+{
+ "deleted": [
+  {
+   "name": "stream_1f7bd8eff3763892",
+   "cls": "OLD-NS",
+   "gb": 72.472474082,
+   "nS": 125970,
+   "built": "08-20 09:35",
+   "why": "구 정식화 추정 (nS=125970)"
+  },
+  {
+   "name": "stream_e86894c475f4fec8",
+   "cls": "OLD-NS",
+   "gb": 72.472474071,
+   "nS": 125970,
+   "built": "08-20 08:19",
+   "why": "구 정식화 추정 (nS=125970)"
+  },
+  {
+   "name": "stream_2b0645864a7166a9",
+   "cls": "OLD-W",
+   "gb": 62.171614031,
+   "nS": 245157,
+   "built": "08-20 13:56",
+   "why": "W-정식화 W=7 이지만 현행 키 아님 (w2~w4)"
+  },
+  {
+   "name": "stream_bc15c40354c101e3",
+   "cls": "OLD-NS",
+   "gb": 53.266735918,
+   "nS": 14080,
+   "built": "08-20 09:37",
+   "why": "구 정식화 추정 (nS=14080)"
+  },
+  {
+   "name": "stream_72b4cc79565466b0",
+   "cls": "OLD-NS",
+   "gb": 53.266735913,
+   "nS": 14080,
+   "built": "08-19 22:05",
+   "why": "구 정식화 추정 (nS=14080)"
+  },
+  {
+   "name": "stream_0f5d3222a9e1a586",
+   "cls": "OLD-NS",
+   "gb": 53.26673591,
+   "nS": 14080,
+   "built": "08-19 00:52",
+   "why": "구 정식화 추정 (nS=14080)"
+  },
+  {
+   "name": "stream_e4a8c8dc67d5ea89",
+   "cls": "OLD-W",
+   "gb": 25.612880045,
+   "nS": 74613,
+   "built": "08-20 10:13",
+   "why": "W-정식화 W=6 이지만 현행 키 아님 (w2~w4)"
+  },
+  {
+   "name": "stream_4bf989bd14f2177e",
+   "cls": "OLD-NS",
+   "gb": 16.795326782,
+   "nS": 53130,
+   "built": "08-20 10:03",
+   "why": "구 정식화 추정 (nS=53130)"
+  },
+  {
+   "name": "stream_c7c50bab6a33bf9e",
+   "cls": "OLD-NS",
+   "gb": 11.97492422,
+   "nS": 50388,
+   "built": "08-20 09:09",
+   "why": "구 정식화 추정 (nS=50388)"
+  },
+  {
+   "name": "stream_f45c2d4f651bce65",
+   "cls": "OLD-NS",
+   "gb": 11.974924208,
+   "nS": 50388,
+   "built": "08-20 08:01",
+   "why": "구 정식화 추정 (nS=50388)"
+  },
+  {
+   "name": "stream_4e85d24869040c19",
+   "cls": "OLD-W",
+   "gb": 8.618161937,
+   "nS": 74613,
+   "built": "08-20 13:44",
+   "why": "W-정식화 W=6 이지만 현행 키 아님 (w2~w4)"
+  },
+  {
+   "name": "stream_2a7324946fe66c77",
+   "cls": "OLD-NS",
+   "gb": 8.485768834,
+   "nS": 19305,
+   "built": "08-19 13:56",
+   "why": "구 정식화 추정 (nS=19305)"
+  },
+  {
+   "name": "stream_48e33ededfaedf0c",
+   "cls": "OLD-NS",
+   "gb": 8.485768825,
+   "nS": 19305,
+   "built": "08-19 21:41",
+   "why": "구 정식화 추정 (nS=19305)"
+  },
+  {
+   "name": "stream_4f35b5e389e67a73",
+   "cls": "OLD-NS",
+   "gb": 8.485768821,
+   "nS": 19305,
+   "built": "08-20 09:10",
+   "why": "구 정식화 추정 (nS=19305)"
+  },
+  {
+   "name": "trans_62c71b9192de9ccf.npz",
+   "cls": "OLD-NS",
+   "gb": 0.725519898,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_a1cb596cd356c419.npz",
+   "cls": "OLD-NS",
+   "gb": 0.725417324,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_2d69445275b3ed42.npz",
+   "cls": "OLD-NS",
+   "gb": 0.725417239,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_2a7324946fe66c77.npz",
+   "cls": "OLD-NS",
+   "gb": 0.487145215,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_c4d128c34a2a4dd1.npz",
+   "cls": "OLD-NS",
+   "gb": 0.198701683,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_314c7ca19572f8ca.npz",
+   "cls": "OLD-NS",
+   "gb": 0.108666839,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_9e874ded002f6661.npz",
+   "cls": "OLD-NS",
+   "gb": 0.104790681,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_1c2d9e94473573f8.npz",
+   "cls": "OLD-NS",
+   "gb": 0.103873146,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_c468dcd3afe1bc79.npz",
+   "cls": "OLD-NS",
+   "gb": 0.103873146,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_72f3cdb743e33f32.npz",
+   "cls": "OLD-NS",
+   "gb": 0.103477209,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_1765bd1fd9416ff9.npz",
+   "cls": "OLD-NS",
+   "gb": 0.101554625,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_9c3a01fbae5e803b.npz",
+   "cls": "OLD-NS",
+   "gb": 0.093563013,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_e654e1195237739e.npz",
+   "cls": "OLD-NS",
+   "gb": 0.093563013,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_1d5f91b4af165f12.npz",
+   "cls": "OLD-NS",
+   "gb": 0.093486368,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_4162e266b2433bf1.npz",
+   "cls": "OLD-NS",
+   "gb": 0.093486368,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_71bbedb1c2eb7d35.npz",
+   "cls": "OLD-NS",
+   "gb": 0.093486368,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_dd4db6e70c60286a.npz",
+   "cls": "OLD-NS",
+   "gb": 0.090130162,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_ff337e2eb36326dd.npz",
+   "cls": "OLD-NS",
+   "gb": 0.05908003,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_b173db591091b232.npz",
+   "cls": "OLD-NS",
+   "gb": 0.018919581,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_2f5fe52a67522712.npz",
+   "cls": "OLD-NS",
+   "gb": 0.018869106,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_3ed205596fcc196e.npz",
+   "cls": "OLD-NS",
+   "gb": 0.015370372,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_57bf3b83149b6d84.npz",
+   "cls": "OLD-NS",
+   "gb": 0.015370372,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_dc5ec273a86a2f54.npz",
+   "cls": "OLD-NS",
+   "gb": 0.015352484,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_e239d7d418e7b427.npz",
+   "cls": "OLD-NS",
+   "gb": 0.015352484,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_f22ee8099aec9e87.npz",
+   "cls": "OLD-NS",
+   "gb": 0.015352484,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_2684f598861014f2.npz",
+   "cls": "OLD-NS",
+   "gb": 0.012381291,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_7d9ee8deac7f352a.npz",
+   "cls": "OLD-NS",
+   "gb": 0.012381291,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_b80b6fe27db6b203.npz",
+   "cls": "OLD-NS",
+   "gb": 0.010623937,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_f6c6bad94410dd73.npz",
+   "cls": "OLD-NS",
+   "gb": 0.004954224,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_55b6ce6caa9639b1.npz",
+   "cls": "OLD-NS",
+   "gb": 0.004825258,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_215ed5a8da56eb33.npz",
+   "cls": "OLD-NS",
+   "gb": 0.001408501,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_38c194efa90842f8.npz",
+   "cls": "OLD-NS",
+   "gb": 0.001204444,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  },
+  {
+   "name": "trans_f9ca1bd1bd49034a.npz",
+   "cls": "OLD-NS",
+   "gb": 0.001204444,
+   "nS": null,
+   "built": "",
+   "why": "in-RAM npz (구 빌드 산출물)"
+  }
+ ],
+ "count": 47,
+ "listed_gb": 471.6,
+ "avail_before_gb": 348.6,
+ "avail_after_gb": 820.2,
+ "freed_gb": 471.6
+}

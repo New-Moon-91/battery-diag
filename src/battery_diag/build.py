@@ -114,16 +114,26 @@ def _partition(na, nchunk):
     return [c for c in cuts if c[1] > c[0]]
 
 
+def _key(inst, tag=''):
+    """in-RAM 캐시 파일명 (확장자 제외). streambuild._key 와 같은 역할이다.
+
+    해시 식은 예전 build() 안에 인라인으로 있던 것을 **그대로** 꺼낸 것이다 —
+    바꾸면 기존 캐시가 전부 무효가 되므로 손대지 말 것.
+    (scripts/cache_inventory.py 가 어느 캐시가 현행인지 판별하는 데 쓴다.)
+    """
+    h = hashlib.md5(json.dumps({
+        'ty': {k: list(v) for k, v in inst.types.items()},
+        'cfg': _cfg_key(inst.cfg), 'tag': tag, **_price_key(inst.pp)},
+        sort_keys=True, default=str).encode()).hexdigest()[:16]
+    return f'trans_{h}'
+
+
 def build(inst, workers: int | None = None, cache_dir: str | Path | None = None,
           tag: str = '', log=None, chunks_per_worker: int = 8):
     say = log or (lambda *a: None)
     key = None
     if cache_dir is not None:
-        h = hashlib.md5(json.dumps({
-            'ty': {k: list(v) for k, v in inst.types.items()},
-            'cfg': _cfg_key(inst.cfg), 'tag': tag, **_price_key(inst.pp)},
-            sort_keys=True, default=str).encode()).hexdigest()[:16]
-        key = Path(cache_dir) / f'trans_{h}.npz'
+        key = Path(cache_dir) / f'{_key(inst, tag)}.npz'
         if key.exists():
             z = np.load(key)
             say(f'build: 캐시 적중 {key.name}')
