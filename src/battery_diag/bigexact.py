@@ -43,6 +43,11 @@ class StreamSolver:
         self.dev = torch.device(device) if self.use_torch else None
         self.dt = torch.float64 if self.use_torch else np.float64
         slab_nnz = slab_nnz or int(os.environ.get('BATDIAG_SLAB_NNZ', 96_000_000))
+        # 정책행 청크 상한 (w6). 정책행 전체를 장치에 올리면 W=7 에서 넘친다 —
+        # nnz 0.96e9 기준 cols(int64)+src(int64)+vals(f64) = 23GB > 15.5GB.
+        # 마스터는 CPU RAM 에 두고 청크만 장치로 올린다. 청크당 장치 사용은
+        # 대략 nnz*(4+8+8+8)B = 100M 이면 2.8GB.
+        self.pol_chunk = int(os.environ.get('BATDIAG_POLICY_CHUNK', 100_000_000))
         self.tie_rel = tie_rel
         self.slabs = self._make_slabs(slab_nnz)         # [(s0,s1,r0,r1,p0,p1), ...]
         self._P = None                                  # 정책행 캐시 (acts 해시 기준)
@@ -71,37 +76,103 @@ class StreamSolver:
             return t.to(dtype) if dtype is not None else t
         return np.ascontiguousarray(x)
 
-    # ---------- 정책행 추출: 상태당 한 행 → 작은 배열 ----------
+    # ---------- 정책행 추출: 상태당 한 행 ----------
     def _policy_rows(self, acts_local):
+        """정책행을 **CPU RAM 에** 모으고, 상태 경계로 자른 청크 목록을 함께 낸다.
+
+        w6 이전에는 이 배열을 통째로 장치에 올렸다. W=6(정책행 nnz ~0.1e9)까지는
+        들어갔지만 W=7 은 0.96e9 라 cols(int64)+src(int64)+vals(f64) = 23GB 로
+        16GB 카드를 넘긴다(실제로 OOM 났다). 그래서 마스터는 RAM 에 두고
+        `_pi_mv` 가 청크 단위로만 장치에 올린다.
+
+        cols·src 는 int32 로 둔다 — 둘 다 상태 인덱스라 nS(<2^31) 안이고,
+        RAM 사용이 절반이 된다. 장치에서 scatter_add_ 가 int64 를 요구하므로
+        그 변환은 청크에서만 한다.
+        """
         acts = np.asarray(acts_local, np.int64)
         key = acts.tobytes()
         if self._Pkey == key:
             return self._P
         rows = self.aptr[:-1] + acts
         lo, hi = self.ip[rows], self.ip[rows + 1]
-        cnt = hi - lo
-        # memmap 에서 정책행만 모은다 (fancy-index 는 조각별로)
-        cols = np.empty(int(cnt.sum()), np.int64)
-        vals = np.empty(int(cnt.sum()), np.float64)
+        cnt = (hi - lo).astype(np.int64)
+        tot = int(cnt.sum())
+        cols = np.empty(tot, np.int32)
+        vals = np.empty(tot, np.float64)
         o = 0
         for l, h_, c in zip(lo, hi, cnt):
             c = int(c)
             cols[o:o+c] = self.ix[l:h_]
             vals[o:o+c] = self.pr[l:h_]
             o += c
-        src = np.repeat(np.arange(self.nS, dtype=np.int64), cnt)
-        P = dict(cols=self._t(cols), vals=self._t(vals, self.dt if self.use_torch else None),
-                 src=self._t(src), r=self._t(self.rsa[rows], self.dt if self.use_torch else None))
+        src = np.repeat(np.arange(self.nS, dtype=np.int32), cnt)
+        rt = self._t(self.rsa[rows], self.dt if self.use_torch else None)
+
+        # 들어가면 통째로 장치에 올린다 (기존 빠른 경로 — 반복마다 전송이 없다).
+        # 안 들어갈 때만 청크로 흘린다. W<=6 은 전자, W=7 은 후자다.
+        resident = True
+        if self.use_torch and self.dev.type == 'cuda':
+            need = tot * 24                     # long cols + f64 vals + long src
+            free = torch.cuda.mem_get_info(self.dev)[0]
+            resident = need < 0.5 * free
+            if not resident:
+                print(f'  [policy] 정책행 nnz={tot:,} → 상주 {need/1e9:.1f}GB > 가용 '
+                      f'{free/1e9:.1f}GB 의 절반 → 청크 스트리밍 '
+                      f'({self.pol_chunk/1e6:.0f}M nnz/청크)', flush=True)
+        if resident:
+            P = dict(cols=self._t(cols.astype(np.int64)),
+                     vals=self._t(vals, self.dt if self.use_torch else None),
+                     src=self._t(src.astype(np.int64)), chunks=None, r=rt)
+            self._P, self._Pkey = P, key
+            return P
+
+        off = np.zeros(self.nS + 1, np.int64); np.cumsum(cnt, out=off[1:])
+        # 상태 경계에 맞춰 청크로 자른다 (한 상태의 행이 쪼개지지 않게).
+        chunks, s0 = [], 0
+        while s0 < self.nS:
+            s1 = int(np.searchsorted(off, off[s0] + self.pol_chunk, 'right') - 1)
+            s1 = max(s1, s0 + 1)
+            chunks.append((s0, min(s1, self.nS), int(off[s0]), int(off[min(s1, self.nS)])))
+            s0 = min(s1, self.nS)
+        P = dict(cols=cols, vals=vals, src=src, chunks=chunks, r=rt)
         self._P, self._Pkey = P, key
         return P
 
-    def _pi_mv(self, P, h):
+    def _pi_mv(self, P, h, transpose=False):
+        """정책행 SpMV. 청크마다 장치로 올렸다 내린다 — 장치 상주량이 상한을 넘지 않는다.
+
+        transpose=False : out[src] += val * h[col]   (정책평가)
+        transpose=True  : out[col] += val * h[src]   (정상분포)
+        """
+        if P['chunks'] is None:                 # 상주 경로 (기존과 동일한 계산)
+            c, v, sr = P['cols'], P['vals'], P['src']
+            if self.use_torch:
+                out = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
+                out.scatter_add_(0, c if transpose else sr,
+                                 v * h[sr if transpose else c])
+                return out
+            out = np.zeros(self.nS)
+            np.add.at(out, c if transpose else sr, v * h[sr if transpose else c])
+            return out
         if self.use_torch:
             out = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
-            out.scatter_add_(0, P['src'], P['vals'] * h[P['cols']])
+            for (_s0, _s1, o0, o1) in P['chunks']:
+                cd = torch.as_tensor(P['cols'][o0:o1], device=self.dev).to(torch.long)
+                vd = torch.as_tensor(P['vals'][o0:o1], device=self.dev, dtype=self.dt)
+                sd = torch.as_tensor(P['src'][o0:o1], device=self.dev).to(torch.long)
+                if transpose:
+                    out.scatter_add_(0, cd, vd * h[sd])
+                else:
+                    out.scatter_add_(0, sd, vd * h[cd])
+                del cd, vd, sd
             return out
         out = np.zeros(self.nS)
-        np.add.at(out, P['src'], P['vals'] * h[P['cols']])
+        for (_s0, _s1, o0, o1) in P['chunks']:
+            c = P['cols'][o0:o1]; v = P['vals'][o0:o1]; sr = P['src'][o0:o1]
+            if transpose:
+                np.add.at(out, c, v * h[sr])
+            else:
+                np.add.at(out, sr, v * h[c])
         return out
 
     # ---------- 정책평가 (ExactSolver.evaluate 와 동일 알고리즘) ----------
@@ -216,8 +287,7 @@ class StreamSolver:
         if self.use_torch:
             d = torch.full((self.nS,), 1.0 / self.nS, device=self.dev, dtype=self.dt)
             for it in range(itmax):
-                nd = torch.zeros(self.nS, device=self.dev, dtype=self.dt)
-                nd.scatter_add_(0, P['cols'], P['vals'] * d[P['src']])
+                nd = self._pi_mv(P, d, transpose=True)
                 nd /= nd.sum()
                 if (it + 1) % check_every == 0 or it + 1 == itmax:
                     if torch.max(torch.abs(nd - d)).item() < tol:
@@ -226,8 +296,7 @@ class StreamSolver:
             return d.cpu().numpy()
         d = np.full(self.nS, 1.0 / self.nS)
         for it in range(itmax):
-            nd = np.zeros(self.nS)
-            np.add.at(nd, P['cols'], P['vals'] * d[P['src']])
+            nd = self._pi_mv(P, d, transpose=True)
             nd /= nd.sum()
             if (it + 1) % check_every == 0 or it + 1 == itmax:
                 if np.max(np.abs(nd - d)) < tol:
