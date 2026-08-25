@@ -61,6 +61,14 @@ results/**
 
 !results/w6/*.json
 
+!results/w7/
+
+!results/w7/*.csv
+
+!results/w7/*.md
+
+!results/w7/*.json
+
 # 실행 로그 — 재생성 가능
 
 logs/
