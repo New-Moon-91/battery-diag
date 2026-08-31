@@ -23,8 +23,16 @@ class ExactSolver:
     def __init__(self, arrays: dict, device: str = 'cuda', dtype=None):
         dtype = dtype or torch.float64
         self.dev, self.dt = torch.device(device), dtype
-        ip = torch.from_numpy(arrays['indptr']).to(self.dev)
-        ix = torch.from_numpy(arrays['indices'].astype(np.int64)).to(self.dev)
+        # CSR 인덱스 폭 — nnz 가 int32 범위 안이면 int32 로 둔다.
+        # 이전 판은 indices 를 무조건 int64 로 올렸다. nnz≈0.94e9 인 셀
+        # (W=5, CAP≥3, NARR=4) 에서 col_indices 만 7.5GB 를 먹고 probs(f64)
+        # 7.5GB 와 합쳐 15.5GB 카드에서 OOM 이 났다 (2026-08-31).
+        # 값 자체는 상태 인덱스(<nS)와 행 포인터(<=nnz)뿐이라 int32 로 충분하고,
+        # cuSPARSE 도 int32 CSR 을 그대로 받는다. 수치는 probs(f64) 가 정한다.
+        nnz = int(arrays['indices'].shape[0])
+        itype = torch.int32 if nnz < 2**31 - 1 else torch.int64
+        ip = torch.from_numpy(arrays['indptr']).to(self.dev, itype)
+        ix = torch.from_numpy(arrays['indices']).to(self.dev, itype)
         pr = torch.from_numpy(arrays['probs']).to(self.dev, dtype)
         self.n_sa = ip.numel() - 1
         self.nS = int(arrays['aptr'].shape[0] - 1)
@@ -46,6 +54,9 @@ class ExactSolver:
         """
         rows = self.aptr[:-1] + torch.as_tensor(acts_local, device=self.dev, dtype=torch.long)
         ip, ix, vl = self.A.crow_indices(), self.A.col_indices(), self.A.values()
+        # ip 는 int32 일 수 있다(__init__ 참조). 아래 누적합·repeat_interleave 는
+        # int64 를 요구하므로 여기서만 승격한다 — 길이 n_sa+1 이라 비용이 작다.
+        ip = ip.to(torch.long)
         starts = ip[rows]; cnt = ip[rows + 1] - starts
         total = int(cnt.sum().item())
         offs = torch.cumsum(cnt, 0) - cnt
