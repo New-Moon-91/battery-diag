@@ -64,6 +64,7 @@ def main():
     ap.add_argument('--pairs', type=int, default=40, help='W 마다 검사할 (상태,행동) 수')
     ap.add_argument('--draws', type=int, default=20000, help='(상태,행동) 마다 표본수')
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--crn', action='store_true', help='고정폭 난수블록 경로를 검정한다')
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -100,7 +101,7 @@ def main():
             rs = np.empty(a.draws)
             bad = 0
             for d in range(a.draws):
-                r, ns = sim.step(st, act, rng)
+                r, ns = sim.step(st, act, rng, crn=a.crn)
                 rs[d] = r
                 j = I.SI.get(ns)
                 if j is None or j not in kidx:
@@ -127,7 +128,7 @@ def main():
               f'최대 {max(abs(r["z_reward"]) for r in sub):.3f}')
         print(f'  정확분포 밖 전이 총 {sum(r["unseen"] for r in sub)}건', flush=True)
 
-    with open(OUT/'s1_transition_check.csv', 'w', newline='', encoding='utf-8') as fh:
+    with open(OUT/('s1_transition_check%s.csv' % ('_crn' if a.crn else '')), 'w', newline='', encoding='utf-8') as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0])); w.writeheader(); w.writerows(rows)
     summ = {}
     for W in a.W:
@@ -141,7 +142,7 @@ def main():
             absz_med=float(np.median([abs(r['z_reward']) for r in sub])),
             absz_max=float(max(abs(r['z_reward']) for r in sub)),
             unseen=int(sum(r['unseen'] for r in sub)))
-    json.dump(summ, open(OUT/'s1_summary.json', 'w', encoding='utf-8'),
+    json.dump(summ, open(OUT/('s1_summary%s.json' % ('_crn' if a.crn else '')), 'w', encoding='utf-8'),
               ensure_ascii=False, indent=1)
     print(f'\n→ {OUT}/s1_transition_check.csv, s1_summary.json')
 

@@ -19,6 +19,8 @@ __pycache__/
 
 *.npz
 
+*.bak
+
 
 # 실행 산출물 (서버 /home/data/batdiag/results 에 보관)
 # — 요약표(summary.csv)만 예외로 추적한다. 포스터·논문 표의 출처가 된다.
@@ -68,6 +70,14 @@ results/**
 !results/w7/*.md
 
 !results/w7/*.json
+
+!results/rcr/
+
+!results/rcr/*.csv
+
+!results/rcr/*.md
+
+!results/rcr/*.json
 
 # 실행 로그 — 재생성 가능
 

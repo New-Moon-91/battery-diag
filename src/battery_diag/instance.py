@@ -165,6 +165,8 @@ class Config:
                               # 재활용 매각수익 p_rc*kWh 를 계상 (소실보정 MDP)
     SB: int = 3               # 신호 구간 수
     prune: bool = True
+    pu_all: bool = False   # True 면 PUOK 가지치기 해제 — 손해여도 무검사 정밀직행 허용.
+                           # 전수 성능평가(S1) 규제를 표현하려면 반드시 True 여야 한다.
     F_E: float = 278/354      # 신속검사 확정 판별 결함 비중
     F_U: float = 62/354       # 미공개
 
@@ -243,7 +245,8 @@ class Instance:
         self.DUMP  = {t for t in self.TY if c.prune and self.REG[t]=='R1'}
         self.SIT   = [(t,b) for t in self.TY for b in range(c.SB)]
         self.SDUMP = {x for x in self.SIT if c.prune and self.VPS[x] <= self.VS[x[0]]}
-        self.PUOK  = {t for t in self.TY if self.VPU[t] > self.VS[t] and t not in self.DUMP}
+        self.PUOK  = (set(self.TY) - self.DUMP) if c.pu_all else \
+                     {t for t in self.TY if self.VPU[t] > self.VS[t] and t not in self.DUMP}
         # 상태공간
         self.W = c.W
         if self.W is None:

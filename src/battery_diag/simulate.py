@@ -50,6 +50,25 @@ class Simulator:
         self.QP = np.array([inst.QP[t] for t in inst.TY], float)
         self.pdet = (1.0 - self.QP) * inst.P_DET
         self.pb = np.array([inst.BP[t][0] for t in inst.TY], float)   # (nT, SB)
+        # 신호구간 추출을 rng.choice(p=...) 로 하면 롤아웃 비용을 지배한다.
+        # 누적확률 + searchsorted 로 바꾼다 (분포는 같다).
+        self.pb_cum = np.cumsum(self.pb, axis=1)
+        self.mix_cum = np.cumsum(self.mix)
+        self.TYl = list(inst.TY)
+        # ---- 공통난수(CRN)를 위한 고정폭 난수블록 ----
+        # 상태마다 소비하는 난수 개수가 다르면 «같은 씨앗» 이어도 스트림이 어긋나
+        # CRN 이 무의미해진다(오히려 잡음만 상관된다). 그래서 매 스텝 **고정 길이**
+        # 블록을 뽑고 용도별로 자리를 정해 둔다 — 도착수 1 + 도착유형 NARR +
+        # 신속검사 2×nT×Wmax. 쓰지 않는 자리는 버린다.
+        self.Wmax = int(inst.W if inst.W is not None else inst.cfg.NMAX*self.nT)
+        self.OFF_TYPE = 1
+        self.OFF_FAST = 1 + self.NARR
+        self.BLK = self.OFF_FAST + 2*self.nT*self.Wmax
+        # 도착 개수의 역함수 추출용 누적분포 (이항 NARR, lam) — 분포는 그대로다
+        from math import comb
+        pk = np.array([comb(self.NARR, k)*self.lam**k*(1-self.lam)**(self.NARR-k)
+                       for k in range(self.NARR+1)], float)
+        self.arr_cdf = np.cumsum(pk/pk.sum())
         self.sell_order = list(inst._sell_order) if inst.W is not None else \
             sorted(range(self.nT), key=lambda k: inst.VS[inst.TY[k]])
 
@@ -64,10 +83,32 @@ class Simulator:
             return np.zeros(self.nT, np.int64)
         return rng.multinomial(A, self.mix)
 
+    def _arrivals_block(self, u):
+        """고정블록에서 도착을 뽑는다 — 소비량이 상태와 무관하다."""
+        if self.arrivals == 'binomial':
+            A = int(np.searchsorted(self.arr_cdf, u[0]))
+            A = min(A, self.NARR)
+        else:                                   # 포아송은 역함수 추출
+            from math import exp
+            p, c, A = exp(-self.lam*self.NARR), 0.0, 0
+            c = p
+            while u[0] > c and A < self.NARR*10:
+                A += 1; p *= self.lam*self.NARR/A; c += p
+        out = np.zeros(self.nT, np.int64)
+        for i in range(A):
+            k = int(np.searchsorted(self.mix_cum, u[self.OFF_TYPE + (i % self.NARR)]))
+            out[min(k, self.nT-1)] += 1
+        return out
+
     # ---------------- 한 걸음 ----------------
-    def step(self, st, a, rng):
-        """(보상, 다음상태) 하나를 표본추출. st=(n, scr), a=(sv,fv,pu,ss,ps)."""
+    def step(self, st, a, rng, crn=False):
+        """(보상, 다음상태) 하나를 표본추출. st=(n, scr), a=(sv,fv,pu,ss,ps).
+
+        crn=True 면 고정폭 난수블록을 써서 **소비량이 상태와 무관**해진다.
+        롤아웃 간 공통난수를 쓰려면 반드시 켜야 한다.
+        """
         I = self.I
+        u = rng.random(self.BLK) if crn else None
         n, scr = st
         sv, fv, pu, ss, ps = a
 
@@ -86,13 +127,29 @@ class Simulator:
 
         # 1) 신속검사 결과 — 결함이면 즉시 재활용(자리 안 씀), 아니면 선별완료가 된다
         rr = 0.0
-        for k in range(self.nT):
-            for _ in range(fv[k]):
-                if rng.random() < self.pdet[k]:
-                    rr += self.VS[k]
-                else:
-                    b = int(rng.choice(self.SB, p=self.pb[k]))
-                    sc.append((I.TY[k], b))
+        nfast = sum(fv)
+        if nfast:
+            if crn:
+                # 유형 k 의 i 번째 신속검사는 항상 같은 자리를 쓴다 — 상태가 달라도
+                # «같은 목적» 의 난수가 맞물린다.
+                for k in range(self.nT):
+                    for i in range(fv[k]):
+                        o = self.OFF_FAST + 2*(k*self.Wmax + i)
+                        if u[o] < self.pdet[k]:
+                            rr += self.VS[k]
+                        else:
+                            b = int(np.searchsorted(self.pb_cum[k], u[o+1]))
+                            sc.append((self.TYl[k], min(b, self.SB-1)))
+            else:
+                v = rng.random(2*nfast); o = 0
+                for k in range(self.nT):
+                    for _ in range(fv[k]):
+                        if v[o] < self.pdet[k]:
+                            rr += self.VS[k]
+                        else:
+                            b = int(np.searchsorted(self.pb_cum[k], v[o+1]))
+                            sc.append((self.TYl[k], min(b, self.SB-1)))
+                        o += 2
         sc = tuple(sorted(sc))
 
         # 2) 보관비 — 도착 **전** 점유에 부과 (step_dist 와 같은 시점)
@@ -100,7 +157,7 @@ class Simulator:
         hc = self.h * occ
 
         # 3) 도착과 강제매각
-        aa = self._arrivals(rng)
+        aa = self._arrivals_block(u) if crn else self._arrivals(rng)
         rev = 0.0
         if self.W is not None:
             excess = int(aa.sum()) - (self.W - occ)
