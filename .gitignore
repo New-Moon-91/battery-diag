@@ -79,6 +79,14 @@ results/**
 
 !results/rcr/*.json
 
+!results/rcr2/
+
+!results/rcr2/*.csv
+
+!results/rcr2/*.md
+
+!results/rcr2/*.json
+
 # 실행 로그 — 재생성 가능
 
 logs/
