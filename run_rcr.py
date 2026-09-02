@@ -45,9 +45,13 @@ ap.add_argument('--W',    default='4,5,6')
 ap.add_argument('--cap',  default='1,2,3')
 ap.add_argument('--narr', default='1,2,3,4')      # lam_eff = 0.9 x NARR
 ap.add_argument('--li',   default='35.8357')      # 리튬 스윕: 8.16,20,35.84,50,70.42
+ap.add_argument('--no-s1inf', action='store_true')
+# 민감도 축 — 재해결이 필요한 파라미터 (기본값은 Config 와 동일)
+ap.add_argument('--phi', type=float, default=1.0,   help='미공개 결함 중 신속검사로 못 잡는 비율')
+ap.add_argument('--Cf',  type=float, default=20_000.,  help='신속검사 변동비')
+ap.add_argument('--Cp',  type=float, default=500_000., help='정밀검사 변동비')
 ap.add_argument('--lam', type=float, default=0.9,
                 help='도착 기회당 도착 확률. load = lam x NARR / CAP')
-ap.add_argument('--no-s1inf', action='store_true')
 # 탄소·환산
 ap.add_argument('--eps-new', type=float, default=74.0)
 ap.add_argument('--eps-repurp', type=float, default=7.73)
@@ -80,7 +84,8 @@ except ImportError:
 
 def run_cell(W, CAP, NARR, Li, s1_only=False):
     price = PriceRCR.from_json(a.params, Li=Li)
-    cfg = Config(lam=a.lam, NARR=NARR, Mcyc=CAP, W=W, prune=False, pu_all=True)
+    cfg = Config(lam=a.lam, NARR=NARR, Mcyc=CAP, W=W, prune=False, pu_all=True,
+                 phi=a.phi, Cf=a.Cf, Cp=a.Cp)
     I = Instance(TYPES, price, cfg)
     arrays = build(I, workers=a.workers, cache_dir=a.cache, tag=','.join(SEL))
     POL = {'S1': (prc.s1_mandatory_precise(I), 1.0)}
@@ -106,8 +111,12 @@ def run_cell(W, CAP, NARR, Li, s1_only=False):
 
 def main():
     for W, CAP, NARR, Li in GRID:
-        jid = f'W{W}_cap{CAP}_narr{NARR}_li{Li:g}'
-        if a.lam != 0.9: jid += f'_lam{a.lam:g}'
+        _tag = ''
+        if a.phi != 1.0:      _tag += f'_phi{a.phi:g}'
+        if a.Cf  != 20_000.:  _tag += f'_Cf{a.Cf:g}'
+        if a.Cp  != 500_000.: _tag += f'_Cp{a.Cp:g}'
+        if a.lam != 0.9:      _tag += f'_lam{a.lam:g}'
+        jid = f'W{W}_cap{CAP}_narr{NARR}_li{Li:g}{_tag}'
         d = out / jid
         if (d/'DONE.json').exists():
             print('skip', jid, flush=True); continue
