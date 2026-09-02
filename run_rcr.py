@@ -45,6 +45,8 @@ ap.add_argument('--W',    default='4,5,6')
 ap.add_argument('--cap',  default='1,2,3')
 ap.add_argument('--narr', default='1,2,3,4')      # lam_eff = 0.9 x NARR
 ap.add_argument('--li',   default='35.8357')      # 리튬 스윕: 8.16,20,35.84,50,70.42
+ap.add_argument('--lam', type=float, default=0.9,
+                help='도착 기회당 도착 확률. load = lam x NARR / CAP')
 ap.add_argument('--no-s1inf', action='store_true')
 # 탄소·환산
 ap.add_argument('--eps-new', type=float, default=74.0)
@@ -78,7 +80,7 @@ except ImportError:
 
 def run_cell(W, CAP, NARR, Li, s1_only=False):
     price = PriceRCR.from_json(a.params, Li=Li)
-    cfg = Config(lam=0.9, NARR=NARR, Mcyc=CAP, W=W, prune=False, pu_all=True)
+    cfg = Config(lam=a.lam, NARR=NARR, Mcyc=CAP, W=W, prune=False, pu_all=True)
     I = Instance(TYPES, price, cfg)
     arrays = build(I, workers=a.workers, cache_dir=a.cache, tag=','.join(SEL))
     POL = {'S1': (prc.s1_mandatory_precise(I), 1.0)}
@@ -105,6 +107,7 @@ def run_cell(W, CAP, NARR, Li, s1_only=False):
 def main():
     for W, CAP, NARR, Li in GRID:
         jid = f'W{W}_cap{CAP}_narr{NARR}_li{Li:g}'
+        if a.lam != 0.9: jid += f'_lam{a.lam:g}'
         d = out / jid
         if (d/'DONE.json').exists():
             print('skip', jid, flush=True); continue
@@ -115,8 +118,9 @@ def main():
         if not a.no_s1inf and CAP < W:
             _, _, r2 = run_cell(W, W, NARR, Li, s1_only=True)
             res['S1inf'] = r2['S1']
-        rec = dict(cell=dict(W=W, Mcyc=CAP, CAP=I.CAP, NARR=NARR, lam_eff=0.9*NARR,
-                             load=0.9*NARR/max(I.CAP, 1), Li=Li),
+        rec = dict(cell=dict(W=W, Mcyc=CAP, CAP=I.CAP, NARR=NARR, lam=a.lam,
+                             lam_eff=a.lam*NARR,
+                             load=a.lam*NARR/max(I.CAP, 1), Li=Li),
                    summary=I.summary(), gstar=gstar, eps=EK, results=res, sec=time.time()-t0)
         (d/'result.json').write_text(json.dumps(rec, ensure_ascii=False, indent=1, default=float))
         (d/'DONE.json').write_text(json.dumps({'jid': jid, 'sec': rec['sec']}))
