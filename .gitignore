@@ -94,3 +94,8 @@ logs/
 # 회수용 번들 — 재생성 가능
 
 rcr_*.tar.gz
+
+!results/scale1b/
+!results/scale1b/*.csv
+!results/scale1b/*.md
+!results/scale1b/*.json
