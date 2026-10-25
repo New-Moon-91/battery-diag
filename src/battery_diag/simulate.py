@@ -159,9 +159,11 @@ class Simulator:
         # 3) 도착과 강제매각
         aa = self._arrivals_block(u) if crn else self._arrivals(rng)
         rev = 0.0
+        self.last_forced = 0                    # 이번 스텝의 강제매각 대수 (scale.evaluate 가 읽는다)
         if self.W is not None:
             excess = int(aa.sum()) - (self.W - occ)
             if excess > 0:
+                self.last_forced = excess
                 aa = aa.copy()
                 for k in self.sell_order:
                     if excess <= 0:

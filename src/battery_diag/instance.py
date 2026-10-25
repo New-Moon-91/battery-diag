@@ -174,7 +174,28 @@ class Config:
 class Instance:
     def __init__(self, types: dict, price: PriceParams, cfg: Config):
         self.types, self.pp, self.cfg = types, price, cfg
-        c = cfg
+        self._economics()
+        self._enumerate()
+
+    @classmethod
+    def lite(cls, types: dict, price: PriceParams, cfg: Config):
+        """상태공간을 **열거하지 않는** 인스턴스 (실규모 시뮬레이션용, scale.py).
+
+        경제량(VS·VPU·VPS·BP·REG·CAP·DUMP…)은 정규 인스턴스와 같은 코드로 계산하므로
+        소형에서 정규 인스턴스와 값이 비트 단위로 같다 (tests/test_scale.py).
+        `ST`/`SI`/`actions`/`step_dist` 는 없다 — `Simulator` 와 scale.py 의 정책만 쓴다.
+        """
+        obj = cls.__new__(cls)
+        obj.types, obj.pp, obj.cfg = types, price, cfg
+        obj._economics()
+        obj.W = cfg.W
+        obj.ST = None; obj.SI = None; obj._acts = {}
+        if cfg.W is not None:
+            obj._sell_order = sorted(range(len(obj.TY)), key=lambda k: obj.VS[obj.TY[k]])
+        return obj
+
+    def _economics(self):
+        c = self.cfg; types = self.types; price = self.pp
         self.TY = list(types)
         self.QP  = {t: types[t][0] for t in self.TY}
         self.KWH = {t: types[t][1] for t in self.TY}
@@ -247,6 +268,9 @@ class Instance:
         self.SDUMP = {x for x in self.SIT if c.prune and self.VPS[x] <= self.VS[x[0]]}
         self.PUOK  = (set(self.TY) - self.DUMP) if c.pu_all else \
                      {t for t in self.TY if self.VPU[t] > self.VS[t] and t not in self.DUMP}
+
+    def _enumerate(self):
+        c = self.cfg
         # 상태공간
         self.W = c.W
         if self.W is None:
