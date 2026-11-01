@@ -146,6 +146,75 @@ class PriceW5:
 
 
 @dataclass
+class PriceCensored(PriceW5):
+    """PriceW5 + **유찰 보정** (2026-11, Omega 원고 Moon & Kim 의 발견을 반영).
+
+    PriceW5.Erev 는 낙찰 273건으로 회귀한 값, 즉 E[W | W ≥ R] 이다. 그러나 재사용급 로트의
+    35~65% 는 유찰되어 예정가 ≈ R 에 수의계약된다. 판매자가 받는 기대수익은
+        E[max(R, W)] = R · E[max(1, M~)],   M~ = W/R  (잠재 배수)
+    이고, 낙찰 표본만 쓰면 E[M | M ≥ 1] 을 대신 써서 과대평가한다. ln M~ 의 Tobit
+    (scripts/fit_tobit_mult.py, Omega 패널 423로트, 좌측검열 0, 공변량 ln cap·ln s·ln Li) 로
+        r(cap, s, Li) = E[max(1, M~)] / E[M~ | M~ ≥ 1]  ∈ (0, 1]
+    를 구해 Erev 에 곱한다. 재활용 채널 V^S 는 그대로다(재활용급 유찰 자료 없음 — 한계).
+
+    유형별 보정비(Li=35.84): 64kWh 급 0.84, 60kWh 급 0.82, 26~36kWh 급 0.73~0.75, 16kWh 급 0.71.
+    유찰확률 G(1) 은 리튬 탄력성 +0.34 로 리튬이 낮을수록 커진다 — 리튬 스윕에 새 경로가 생긴다.
+    """
+    t_m0: float = 0.0; t_cap: float = 0.0; t_s: float = 0.0; t_li: float = 0.0; t_sig: float = 1.0
+    censor: bool = True
+
+    @classmethod
+    def from_json(cls, path, tobit_path=None):
+        import os
+        d = json.load(open(path, encoding='utf-8'))
+        tp = tobit_path or d.get('tobit')
+        if tp is None:
+            raise ValueError('PriceCensored 는 tobit 파라미터가 필요하다 (json 의 "tobit" 키 또는 tobit_path)')
+        if not os.path.isabs(tp):
+            tp = os.path.join(os.path.dirname(os.path.abspath(path)), tp)
+        T = json.load(open(tp, encoding='utf-8'))
+        c = T['coef']
+        return cls(d['reuse_c0'], d['reuse_cap'], d['reuse_s'], d['reuse_li'], d['reuse_sd'],
+                   d['recyc_c0'], d['recyc_cap'], d['recyc_li'], d['recyc_sd'],
+                   d['Li_ref'], bool(d.get('smear', True)),
+                   c['m0'], c['m_cap'], c['m_s'], c['m_li'], T['sigma'], bool(d.get('censor', True)))
+
+    def _mu(self, s, cap):
+        return (self.t_m0 + self.t_cap*np.log(cap) + self.t_s*np.log(np.clip(s, 1e-3, None))
+                + self.t_li*np.log(self.Li_ref))
+
+    def G(self, s, cap):
+        """유찰확률 P(M~ < 1) = P(W < R)."""
+        return _Phi(-self._mu(s, cap)/self.t_sig)
+
+    def ratio(self, s, cap):
+        """E[max(1,M~)] / E[M~ | M~ ≥ 1]."""
+        m, sg = self._mu(s, cap), self.t_sig
+        tail = np.exp(m + 0.5*sg**2)*_Phi((m + sg**2)/sg)          # E[M~ 1{M~≥1}]
+        emax = _Phi(-m/sg) + tail
+        econd = tail/max(_Phi(m/sg), 1e-12)
+        return emax/econd
+
+    def Erev(self, s, cap):
+        base = super().Erev(s, cap)
+        return base*self.ratio(s, cap) if self.censor else base
+
+    def key(self):
+        k = super().key()
+        k['censor'] = [self.t_m0, self.t_cap, self.t_s, self.t_li, self.t_sig, self.censor]
+        return k
+
+
+def load_price(path):
+    """가격 파라미터 json → 가격 객체. 스키마로 분기한다.
+    'tobit' 키 → PriceCensored, 'reuse_c0' → PriceW5, 그 외 → PriceParams(구 2층)."""
+    d = json.load(open(path, encoding='utf-8'))
+    if 'tobit' in d: return PriceCensored.from_json(path)
+    if 'reuse_c0' in d: return PriceW5.from_json(path)
+    return PriceParams.from_json(path)
+
+
+@dataclass
 class Config:
     lam: float = 0.9          # 도착 슬롯당 확률
     NARR: int = 1             # 기간당 도착 슬롯 수 (배치 도착)

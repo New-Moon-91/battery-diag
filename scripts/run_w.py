@@ -34,7 +34,7 @@ OUT = Path(__file__).resolve().parents[1]/'results'/'w5'
 def main():
     import numpy as np, torch
     from battery_diag.data import load_cached, fleet_w5
-    from battery_diag.instance import Instance, PriceParams, PriceW5, Config
+    from battery_diag.instance import Instance, PriceParams, PriceW5, Config, load_price
     from battery_diag.build import build
     from battery_diag.streambuild import build_stream
     from battery_diag.exact import ExactSolver
@@ -63,8 +63,7 @@ def main():
              for t in sel}
     pf = Path(args.params) if args.params else \
         root/'data'/('params_w5.json' if args.fleet == 'w5' else 'params.json')
-    price = (PriceW5 if 'reuse_c0' in json.load(open(pf, encoding='utf-8'))
-             else PriceParams).from_json(pf)
+    price = load_price(pf)      # tobit 키 → PriceCensored(유찰 보정), reuse_c0 → PriceW5, 그 외 구 2층
     print(f'[{args.fleet}] 유형 {sel}  가격 {pf.name} ({type(price).__name__})', flush=True)
     dev = 'cuda' if torch.cuda.is_available() else 'cpu'
     out = Path(args.outdir); out.mkdir(parents=True, exist_ok=True)

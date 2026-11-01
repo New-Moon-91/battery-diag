@@ -18,7 +18,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
-from battery_diag.instance import Instance, PriceW5, Config
+from battery_diag.instance import Instance, Config, load_price
 from battery_diag.simulate import Simulator
 from battery_diag import scale as S
 
@@ -64,12 +64,13 @@ def main():
                          '경계 유형을 FAST 로 끌어와 노는 용량을 채운다 (M=16 셀에서 용량 미사용 관측)')
     ap.add_argument('--arrivals', default='poisson', choices=('poisson', 'binomial'))
     ap.add_argument('--Cp', type=float, default=500_000)
+    ap.add_argument('--params', default=str(ROOT/'data'/'params_w5.json'), help='가격 파라미터 json (params_w5c.json = 유찰 보정판)')
     ap.add_argument('--out', default=str(ROOT/'results'/'scale'/'scale1.json'))
     a = ap.parse_args()
 
     types = build_types(a.fleet)
     FE, FU = failure_shares_or_default()
-    price = PriceW5.from_json(ROOT/'data'/'params_w5.json')
+    price = load_price(a.params)
     Ms = [int(x) for x in a.M.split(',')]; seeds = [int(x) for x in a.seeds.split(',')]
     kappas = [float(x) for x in a.kappa.split(',')]
     mu_scales = [float(x) for x in a.mu_scale.split(',')]
@@ -80,7 +81,7 @@ def main():
     else:
         NARR = int(np.ceil(a.lam/0.9)); lam = a.lam/NARR
     lam_eff = lam*NARR
-    out = dict(args=vars(a), types={t: list(v) for t, v in types.items()}, lam_eff=lam_eff,
+    out = dict(args=vars(a), price=type(price).__name__, types={t: list(v) for t, v in types.items()}, lam_eff=lam_eff,
                F_E=FE, F_U=FU, cells=[])
     print(f'fleet={a.fleet} |T|={len(types)} λ_eff={lam_eff} W={a.W} M={Ms} T={a.T} seeds={seeds}',
           flush=True)

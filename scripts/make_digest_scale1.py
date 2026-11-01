@@ -15,14 +15,14 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT/'src'))
-from battery_diag.instance import Instance, PriceW5, Config
+from battery_diag.instance import Instance, PriceW5, Config, load_price
 
 
 def load(path):
     d = json.load(open(path, encoding='utf-8'))
     types = {t: tuple(v) for t, v in d['types'].items()}
-    price = PriceW5.from_json(ROOT/'data'/'params_w5.json')
     a = d['args']; lam = d['lam_eff']
+    price = load_price(a.get('params', ROOT/'data'/'params_w5.json'))
     rows = []
     for c in d['cells']:
         cfg = Config(lam=1.0, NARR=int(round(lam)), Cp=a['Cp'], Cf=20_000, phi=1.0,
@@ -60,7 +60,7 @@ def main():
     for k in ('gap', 'gap_cv', 'se_cv', 'b1dev_pct'): out[k] = out[k].round(3)
     for k in ('occ', 'occ_p99', 'prec', 'fast', 'forced', 'prec_lp'): out[k] = out[k].round(2)
     print(out.to_string(index=False))
-    o = ROOT/'results'/'scale'/'scale1_table.csv'
+    o = Path(sys.argv[1]).parent/'table.csv'
     df.to_csv(o, index=False); print('->', o)
 
 
