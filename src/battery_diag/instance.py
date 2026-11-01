@@ -163,6 +163,12 @@ class PriceCensored(PriceW5):
     t_m0: float = 0.0; t_cap: float = 0.0; t_s: float = 0.0; t_li: float = 0.0; t_sig: float = 1.0
     censor: bool = True
     rc_ratio: float = 1.0     # 재활용 채널 유찰 보정비 (scripts/fit_recycle_fail.py). 1.0 = 보정 없음(w5c)
+    # 연식 보정 (w5e, 선택). json 의 "age" 키가 params_age.json 을 가리키면 유형별
+    #   가격배수 exp(d·(āge_t − āge)) 와 Tobit μ 이동 m_age·(āge_t − āge) 를 적용한다.
+    # 직접회귀 연령계수 −0.083/년(se 0.023), Tobit +0.064/년 — 예정가가 연식에 더 빨리 깎여
+    # 배수는 오히려 오른다(Omega: W −16%/년, R 0.1^{a/9}). 유형 평균연령은 낙찰 273건 기준.
+    age_mult: dict = field(default_factory=dict)
+    age_shift: dict = field(default_factory=dict)
 
     # 재활용 채널 (2026-11-01 추가, w5d). 재활용급은 예정가가 비공개라 Tobit 을 쓸 수 없고,
     # 관측 유찰률 G_rc(연도)와 «유찰 후 수의계약가 / 낙찰가» 비 ρ(연도)로
@@ -186,13 +192,29 @@ class PriceCensored(PriceW5):
         if rf is not None:
             if not os.path.isabs(rf): rf = os.path.join(base, rf)
             rc = float(json.load(open(rf, encoding='utf-8'))['r_rc'])
+        am, ash = {}, {}
+        ag = d.get('age')
+        if ag is not None:
+            if not os.path.isabs(ag): ag = os.path.join(base, ag)
+            A = json.load(open(ag, encoding='utf-8'))
+            am = {t: v['mult_price'] for t, v in A['types'].items()}
+            ash = {t: v['shift_tobit'] for t, v in A['types'].items()}
         return cls(d['reuse_c0'], d['reuse_cap'], d['reuse_s'], d['reuse_li'], d['reuse_sd'],
                    d['recyc_c0'], d['recyc_cap'], d['recyc_li'], d['recyc_sd'],
                    d['Li_ref'], bool(d.get('smear', True)),
-                   c['m0'], c['m_cap'], c['m_s'], c['m_li'], T['sigma'], bool(d.get('censor', True)), rc)
+                   c['m0'], c['m_cap'], c['m_s'], c['m_li'], T['sigma'], bool(d.get('censor', True)), rc,
+                   am, ash)
 
     def VS(self, cap):
         return super().VS(cap)*(self.rc_ratio if self.censor else 1.0)
+
+    def Erev_t(self, t, s, cap):
+        """유형별 기대 재사용 수익 — 연령 보정이 있으면 적용 (Instance 가 이 훅을 쓴다)."""
+        base = PriceW5.Erev(self, s, cap)*self.age_mult.get(t, 1.0)
+        if not self.censor: return base
+        m, sg = self._mu(s, cap) + self.age_shift.get(t, 0.0), self.t_sig
+        tail = np.exp(m + 0.5*sg**2)*_Phi((m + sg**2)/sg)
+        return base*(_Phi(-m/sg) + tail)/(tail/max(_Phi(m/sg), 1e-12))
 
     def _mu(self, s, cap):
         return (self.t_m0 + self.t_cap*np.log(cap) + self.t_s*np.log(np.clip(s, 1e-3, None))
@@ -217,6 +239,7 @@ class PriceCensored(PriceW5):
     def key(self):
         k = super().key()
         k['censor'] = [self.t_m0, self.t_cap, self.t_s, self.t_li, self.t_sig, self.censor, self.rc_ratio]
+        if self.age_mult: k['age'] = sorted((t, round(v, 6), round(self.age_shift.get(t, 0.0), 6)) for t, v in self.age_mult.items())
         return k
 
 
@@ -304,12 +327,14 @@ class Instance:
         for t in self.TY:
             q = self.QP[t]; pb, ms = self.BP[t]; cap = self.KWH[t]
             self.VS[t] = float(price.VS(cap))
-            self.VPU[t] = q*sum(pb[b]*price.Erev(ms[b],cap) for b in range(c.SB)) \
+            # 유형별 훅: 가격 객체가 Erev_t(t, s, cap) 를 제공하면(연령 보정판) 그것을 쓴다.
+            _Erev = (lambda s_, c_: price.Erev_t(t, s_, c_)) if hasattr(price, 'Erev_t') else price.Erev
+            self.VPU[t] = q*sum(pb[b]*_Erev(ms[b],cap) for b in range(c.SB)) \
                           + (1-q)*self.VS[t] - c.Cp
             qq = q/(q+(1-q)*(1-self.P_DET)) if q > 0 else 0.0
             self.QPOST[t] = qq
             for b in range(c.SB):
-                self.VPS[(t,b)] = qq*price.Erev(ms[b],cap) + (1-qq)*self.VS[t] - c.Cp
+                self.VPS[(t,b)] = qq*_Erev(ms[b],cap) + (1-qq)*self.VS[t] - c.Cp
         # 경제영역 R1/R2/R3
         #
         # 두 갈래로 매긴다.

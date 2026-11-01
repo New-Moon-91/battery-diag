@@ -64,13 +64,16 @@ def main():
                          '경계 유형을 FAST 로 끌어와 노는 용량을 채운다 (M=16 셀에서 용량 미사용 관측)')
     ap.add_argument('--arrivals', default='poisson', choices=('poisson', 'binomial'))
     ap.add_argument('--Cp', type=float, default=500_000)
-    ap.add_argument('--params', default=str(ROOT/'data'/'params_w5.json'), help='가격 파라미터 json (params_w5c.json = 유찰 보정판)')
+    ap.add_argument('--params', default=str(ROOT/'data'/'params_w5.json'), help='가격 파라미터 json (params_w5d.json = 양 채널 유찰 보정판)')
+    ap.add_argument('--Li', type=float, default=None, help='리튬 기준값 덮어쓰기 (가격·유찰확률 모두 이동)')
     ap.add_argument('--out', default=str(ROOT/'results'/'scale'/'scale1.json'))
     a = ap.parse_args()
 
     types = build_types(a.fleet)
     FE, FU = failure_shares_or_default()
     price = load_price(a.params)
+    if a.Li is not None:
+        price.Li_ref = float(a.Li)
     Ms = [int(x) for x in a.M.split(',')]; seeds = [int(x) for x in a.seeds.split(',')]
     kappas = [float(x) for x in a.kappa.split(',')]
     mu_scales = [float(x) for x in a.mu_scale.split(',')]
@@ -91,7 +94,7 @@ def main():
         I = Instance.lite(types, price, cfg)
         fb = S.fluid_bound(I, lam_eff, I.CAP)
         sim = Simulator(I, arrivals=a.arrivals)
-        pols = {'B1': S.pol_b1(I), 'INDEX': S.pol_index(I),
+        pols = {'B1': S.pol_b1(I), 'INDEX': S.pol_index(I), 'INDEX_h2': S.pol_index(I, hold_beta=2.0),
                 'LAGR': S.pol_lagr(I, fb['mu'], lam_eff)}
         for thr in range(cfg.SB):
             pols[f'B_fast{thr}'] = S.pol_b_fast(I, thr)

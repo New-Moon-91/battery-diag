@@ -113,3 +113,13 @@ rcr_*.tar.gz
 !results/scale1d/
 !results/scale1d/*.csv
 !results/scale1d/*.json
+
+!results/w5e/
+!results/w5e/*.json
+!results/scale1e/
+!results/scale1e/*.csv
+!results/scale1e/*.json
+!results/scale1f/
+!results/scale1f/*.csv
+!results/scale1f/*.md
+!results/scale1f/*.json

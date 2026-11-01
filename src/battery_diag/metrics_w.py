@@ -50,14 +50,19 @@ def gain(P: dict, mu: np.ndarray) -> float:
 
 
 # ------------------------------------------------------------------ 강제매각
-def forced_sale_stats(I, slack: int, _cache={}):
+def forced_sale_stats(I, slack: int, _cache=None):
     """잔여 자리 slack 에서 이번 기간 강제매각의 기대 (대수, 용량kWh, 좌초kWh).
 
     Instance._arr_slack 과 **동일한 규칙**(매각가치 낮은 차종부터)을 따르되
     유형별 매각 대수를 추적해 q_P 가중 좌초 용량을 낸다.
+
+    캐시는 **인스턴스에 붙인다**. 종전의 모듈 전역 dict 에 key=(id(I), slack) 는 이전
+    인스턴스가 해제된 뒤 새 인스턴스가 같은 id 를 받으면 다른 셀(다른 lam·NARR·가격)의
+    값을 돌려주는 버그가 있었다 (RCR 용어 ㉑, 서버패치 0002 에 해당).
     """
-    key = (id(I), slack)
-    if key in _cache: return _cache[key]
+    cache = I.__dict__.setdefault('_forced_cache', {})
+    key = slack
+    if key in cache: return cache[key]
     nT = len(I.TY); n_sold = kwh = strand = 0.0
     for a, pr in I._ARRP:
         excess = sum(a) - slack
@@ -71,7 +76,7 @@ def forced_sale_stats(I, slack: int, _cache={}):
             strand += pr * take * I.QP[t] * I.KWH[t]
         n_sold += pr * excess
     out = (n_sold, kwh, strand)
-    _cache[key] = out
+    cache[key] = out
     return out
 
 

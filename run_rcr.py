@@ -26,7 +26,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'src'))
 from battery_diag.data import fleet_w5, SEL_W5
 from battery_diag.instance import Instance, Config
-from battery_diag.price_rcr import PriceRCR
+from battery_diag.price_rcr import PriceRCR, PriceRCRCensored
 from battery_diag.build import build
 from battery_diag import policies as pol, policies_rcr as prc, metrics_w as M
 
@@ -50,6 +50,8 @@ ap.add_argument('--no-s1inf', action='store_true')
 ap.add_argument('--phi', type=float, default=1.0,   help='미공개 결함 중 신속검사로 못 잡는 비율')
 ap.add_argument('--Cf',  type=float, default=20_000.,  help='신속검사 변동비')
 ap.add_argument('--Cp',  type=float, default=500_000., help='정밀검사 변동비')
+ap.add_argument('--censor', action='store_true',
+                help='유찰 보정 가격(PriceRCRCensored): 재사용 Tobit 보정비 + 재활용 r_rc. jid 에 _cen 접미')
 ap.add_argument('--lam', type=float, default=0.9,
                 help='도착 기회당 도착 확률. load = lam x NARR / CAP')
 # 탄소·환산
@@ -83,7 +85,7 @@ except ImportError:
 
 
 def run_cell(W, CAP, NARR, Li, s1_only=False):
-    price = PriceRCR.from_json(a.params, Li=Li)
+    price = (PriceRCRCensored if a.censor else PriceRCR).from_json(a.params, Li=Li)
     cfg = Config(lam=a.lam, NARR=NARR, Mcyc=CAP, W=W, prune=False, pu_all=True,
                  phi=a.phi, Cf=a.Cf, Cp=a.Cp)
     I = Instance(TYPES, price, cfg)
@@ -116,6 +118,7 @@ def main():
         if a.Cf  != 20_000.:  _tag += f'_Cf{a.Cf:g}'
         if a.Cp  != 500_000.: _tag += f'_Cp{a.Cp:g}'
         if a.lam != 0.9:      _tag += f'_lam{a.lam:g}'
+        if a.censor:          _tag += '_cen'
         jid = f'W{W}_cap{CAP}_narr{NARR}_li{Li:g}{_tag}'
         d = out / jid
         if (d/'DONE.json').exists():

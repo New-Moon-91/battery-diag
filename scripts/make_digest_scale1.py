@@ -23,6 +23,7 @@ def load(path):
     types = {t: tuple(v) for t, v in d['types'].items()}
     a = d['args']; lam = d['lam_eff']
     price = load_price(a.get('params', ROOT/'data'/'params_w5.json'))
+    if a.get('Li') is not None: price.Li_ref = float(a['Li'])   # 리튬 덮어쓰기 셀의 통제변량 기준
     rows = []
     for c in d['cells']:
         cfg = Config(lam=1.0, NARR=int(round(lam)), Cp=a['Cp'], Cf=20_000, phi=1.0,

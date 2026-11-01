@@ -144,11 +144,17 @@ def pol_b_fast(I, thr=0):
     return act
 
 
-def pol_index(I):
-    """policies.index_myopic 과 같은 정의 (상태열거 없음)."""
+def pol_index(I, hold_beta=None):
+    """policies.index_myopic 과 같은 정의 (상태열거 없음).
+
+    hold_beta: None 이면 원 정의 — 선별품 중 V^PS>V^S 는 무기한 보유. 이 정의는 큰 W 에서 창고를
+    채워 강제매각을 유발한다(scale1 §2-4). 숫자면 한계가치 순위 ≤ hold_beta·CAP 인 선별품만 보유하고
+    나머지는 판다 (대규모용 재정의, INDEX_h). 신속검사 결정(EVSI−C_f>0)과 용량 배정은 원 정의 그대로.
+    """
     from .policies import evsi
     TY = I.TY; nT = len(TY)
     fast_ok = {t: (evsi(I, t) - I.cfg.Cf > 0) for t in TY}
+    CAP = max(I.CAP, 1)
     def act(st):
         n, scr = st; cand = []
         for k, t in enumerate(TY):
@@ -170,6 +176,10 @@ def pol_index(I):
             elif fast_ok[t]: fv[k] = c
             else: sv[k] = c
         ss = {j for j in range(len(scr)) if j not in ps and I.VPS[scr[j]] <= I.VS[scr[j][0]]}
+        if hold_beta is not None:
+            rest = [(m, j) for m, kind, j in cand[I.CAP:] if kind == 'S' and j not in ss]
+            for r, (m, j) in enumerate(rest, start=1):
+                if r > hold_beta*CAP: ss.add(j)
         return (tuple(sv), tuple(fv), tuple(pu), frozenset(ss), frozenset(ps))
     return act
 
