@@ -162,22 +162,37 @@ class PriceCensored(PriceW5):
     """
     t_m0: float = 0.0; t_cap: float = 0.0; t_s: float = 0.0; t_li: float = 0.0; t_sig: float = 1.0
     censor: bool = True
+    rc_ratio: float = 1.0     # 재활용 채널 유찰 보정비 (scripts/fit_recycle_fail.py). 1.0 = 보정 없음(w5c)
+
+    # 재활용 채널 (2026-11-01 추가, w5d). 재활용급은 예정가가 비공개라 Tobit 을 쓸 수 없고,
+    # 관측 유찰률 G_rc(연도)와 «유찰 후 수의계약가 / 낙찰가» 비 ρ(연도)로
+    #     r_rc = 1 − G_rc(1 − ρ)   (연도별 로트수 가중; 2022 1.00 · 2023 0.82 · 2024 0.96 · 2025 0.93 → 0.924)
+    # 를 만들어 V^S 에 곱한다. json 의 "recycle_fail" 키가 가리키는 파일의 r_rc 를 읽는다.
 
     @classmethod
     def from_json(cls, path, tobit_path=None):
         import os
         d = json.load(open(path, encoding='utf-8'))
+        base = os.path.dirname(os.path.abspath(path))
         tp = tobit_path or d.get('tobit')
         if tp is None:
             raise ValueError('PriceCensored 는 tobit 파라미터가 필요하다 (json 의 "tobit" 키 또는 tobit_path)')
         if not os.path.isabs(tp):
-            tp = os.path.join(os.path.dirname(os.path.abspath(path)), tp)
+            tp = os.path.join(base, tp)
         T = json.load(open(tp, encoding='utf-8'))
         c = T['coef']
+        rc = 1.0
+        rf = d.get('recycle_fail')
+        if rf is not None:
+            if not os.path.isabs(rf): rf = os.path.join(base, rf)
+            rc = float(json.load(open(rf, encoding='utf-8'))['r_rc'])
         return cls(d['reuse_c0'], d['reuse_cap'], d['reuse_s'], d['reuse_li'], d['reuse_sd'],
                    d['recyc_c0'], d['recyc_cap'], d['recyc_li'], d['recyc_sd'],
                    d['Li_ref'], bool(d.get('smear', True)),
-                   c['m0'], c['m_cap'], c['m_s'], c['m_li'], T['sigma'], bool(d.get('censor', True)))
+                   c['m0'], c['m_cap'], c['m_s'], c['m_li'], T['sigma'], bool(d.get('censor', True)), rc)
+
+    def VS(self, cap):
+        return super().VS(cap)*(self.rc_ratio if self.censor else 1.0)
 
     def _mu(self, s, cap):
         return (self.t_m0 + self.t_cap*np.log(cap) + self.t_s*np.log(np.clip(s, 1e-3, None))
@@ -201,7 +216,7 @@ class PriceCensored(PriceW5):
 
     def key(self):
         k = super().key()
-        k['censor'] = [self.t_m0, self.t_cap, self.t_s, self.t_li, self.t_sig, self.censor]
+        k['censor'] = [self.t_m0, self.t_cap, self.t_s, self.t_li, self.t_sig, self.censor, self.rc_ratio]
         return k
 
 
